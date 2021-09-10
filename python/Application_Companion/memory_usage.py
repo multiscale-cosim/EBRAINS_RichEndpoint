@@ -67,9 +67,7 @@ class MemoryUsage:
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
-                                        log_configurations=self._log_settings,
-                                        directory='logs',
-                                        directory_path='AC results')
+                                        log_configurations=self._log_settings)
         self.__logger.debug("logger is configured.")
         if not path_to_read_stats:
             self._path_to_read_stats = path_to_read_stats

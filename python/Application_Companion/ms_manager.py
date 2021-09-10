@@ -11,75 +11,41 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
-import multiprocessing
-from common_enums import SteeringCommands
 from python.configuration_manager.configurations_manager import ConfigurationsManager
-from application_companion import ApplicationCompanion
 from argument_parser import parse_command_line_arguments
+from python.launcher import Launcher
 
 
-def get_response(response, response_queue):
-    while not response_queue.empty():
-        logger.info('waiting for response')
-        response.append(response_queue.get())
-
-
-def send_steering_command(command_steering_queue, steering_command):
-    logger.debug(f'sending {steering_command}.')
-    command_steering_queue.put(steering_command)
-    logger.debug(f'sent {steering_command}')
-
-
+#############################################################################
+#  This demonstrates the functionality by running the example applications  #
+#############################################################################
 if __name__ == '__main__':
     """
-    Entry point to launch the application companion
-    for the main application to be executed
-    and to execute the steering commands.
+    Entry point to launch the orchestrator and application companions to
+    execute the action plan and to demonstrate POC of steering via CLI.
     """
     configurations_manager = ConfigurationsManager()
     log_settings = configurations_manager.get_configuration_settings(
         'log_configurations', 'global_settings.xml')
+    # get path to setup output directory from the XML configuration file
+    default_dir = configurations_manager.get_configuration_settings(
+        'output_directory', 'global_settings.xml')
+    # setup default directories (Output, Output/Results, Output/Logs,
+    # Output/Figures, Output/Monitoring_DATA)
+    configurations_manager.setup_default_directories(default_dir['output_directory'])
     logger = configurations_manager.load_log_configurations(
                                             name=__name__,
-                                            log_configurations=log_settings,
-                                            directory='logs',
-                                            directory_path='AC results')
+                                            log_configurations=log_settings)
     logger.debug("logger is configured!")
     # get path to application to be executed
     logger.debug('parsing CLI args')
     __CLI_args = parse_command_line_arguments()
-    application = {'action': __CLI_args.app, 'args': __CLI_args.param}
-    logger.info(f'application to be executed: {application}')
-    command_steering_queue = multiprocessing.JoinableQueue()
-    application_companion_response_queue = multiprocessing.Queue()
-    minimum_delays = []  # mock-up for minimum delays
-    response_codes = []  # response codes from application companion
+    applications = [{'action': __CLI_args.app, 'args': __CLI_args.param},
+                    {'action': __CLI_args.app, 'args': '300'}]
+    logger.info(f'application to be executed: {applications}')
 
-    # initialize the application companion
-    application_companion = ApplicationCompanion(
-                                log_settings, configurations_manager,
-                                application, command_steering_queue,
-                                application_companion_response_queue)
-    # launch the application companion
-    application_companion.start()
 
-    ###############################################
-    #  mock-up the execution of steering commands #
-    ###############################################
+    launcher = Launcher(log_settings, configurations_manager)
+    launcher.launch(applications)
 
-    # TODO: get the steering commands from user interface (CLI/GUI) or from XML
-
-    # INIT steering command
-    send_steering_command(command_steering_queue, SteeringCommands.INIT.value)
-    get_response(minimum_delays, application_companion_response_queue)
-    logger.debug(f'minimum delay is {minimum_delays}')  # mock-up
-
-    # START steering command
-    send_steering_command(command_steering_queue, SteeringCommands.START.value)
-    get_response(response_codes, application_companion_response_queue)
-
-    # END steering command
-    send_steering_command(command_steering_queue, SteeringCommands.END.value)
-    get_response(response_codes, application_companion_response_queue)
-
-    exit(0)
+exit(0)

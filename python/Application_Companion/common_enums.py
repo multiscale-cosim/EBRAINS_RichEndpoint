@@ -15,16 +15,43 @@ import enum
 
 
 @enum.unique
-class SteeringCommands(enum.Enum):
+class SteeringCommands(enum.IntEnum):
     """ Enum class for steering Commands """
-    INIT = 'init'
-    START = 'start'
-    END = 'end'
+    INIT = 1
+    START = 2
+    END = 3
+    EXIT = 4
+    PAUSE = 5  # TODO: add support
+    RESUME = 6  # TODO: add support
 
 
 @enum.unique
-class Response(enum.Enum):
+class Response(enum.IntEnum):
     """ Enum class for responses """
     # TODO: extend responses for different types of errors and for each module
     OK = 0
     ERROR = -1
+
+
+@enum.unique
+class EVENT(enum.IntEnum):
+    """ Enum class for responses """
+    # TODO: extend to support different event types
+    FATAL = -1
+
+
+@enum.unique
+class SERVICE_COMPONENT_CATEGORY(enum.IntEnum):
+    """ Enum class for services (components) """
+    APPLICATION_COMPANION = 0
+    ORCHESTRATOR = 1
+    COMMAND_AND_SERVICE = 2
+    STEERING_SERVICE = 3
+    TRANSFORMER = 4
+
+
+@enum.unique
+class SERVICE_COMPONENT_STATUS(enum.IntEnum):
+    """ Enum class for services (components) status"""
+    UP = 0
+    DOWN = 1

@@ -35,9 +35,7 @@ class ResourceUsageMonitor:
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
-                                        log_configurations=self._log_settings,
-                                        directory='logs',
-                                        directory_path='AC results')
+                                        log_configurations=self._log_settings)
         self.__logger.debug("logger is configured.")
         if stop_event is None:
             self._stop_event = threading.Event()
@@ -158,7 +156,7 @@ class ResourceUsageMonitor:
         self.__logger.debug(f"currently active threads:"
                             f"{self.__threads_started}")
         if(len(self.__threads_started[0]) == (len(self.__monitors)+1)):
-            self.__logger.debug(f'return code:{0}')
+            self.__logger.debug('monitoring deamon thread started.')
             return Response.OK
         else:
             return Response.ERROR

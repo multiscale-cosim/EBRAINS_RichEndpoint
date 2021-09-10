@@ -49,15 +49,19 @@
 The RichEndpoint is a set of functionality implemented in the following modules:
 
 * <a href="/python/Application_Companion"> Application Companion </a>
-* Orchestrator
+* <a href="/python/Orchestrator"> Orchestrator </a>
+* <a href="/python/Orchestrator/command_steering_service.py"> Command and Steering service </a>
 * Communication Protocol (InterscaleHUB)
-* Services exposing the functionality such as Command and Steering service
 
 ## :sparkles: Features ##
 
 :heavy_check_mark: A Module shared across all the RichEndpoint modules for general functionality such as a centralized management of configuration settings, setting up directories and setting a uniform format for the logging. More details are provided <a href="/python/configuration_manager"> here</a>.
 
 :heavy_check_mark: A lightweight application for managing and monitoring of integrated applications. More details are provided <a href="/python/Application_Companion"> here</a>.
+
+:heavy_check_mark: A module to manage the workflow execution by orchestrating and steering the other components (Application Companions). It keeps the workflow synchronized and the global state and status as validated. More details are provided <a href="/python/Orchestrator"> here</a>.
+
+:heavy_check_mark: A module to register and discover the all distributed component services (such as Orchestrator and Application Companions) of the workflow.
 
 ## :rocket: Technologies ##
 
@@ -81,7 +85,10 @@ $ git clone git@github.com:multiscale-cosim/EBRAINS-RichEndpoint.git
 # Access
 $ cd EBRAINS-RichEndpoint
 
-# set enviornment variable
+# set HOME variable
+$ export HOME=/path/to/EBRAINS-RichEndpoint
+
+# set environment variable
 $ export PYTHONPATH=/path/to/EBRAINS-RichEndpoint
 
 # Install for CMake older than 3.15

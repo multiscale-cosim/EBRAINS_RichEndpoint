@@ -13,6 +13,7 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
+from python.configuration_manager.default_directories_enum import DefaultDirectories
 import subprocess
 import time
 from resource_usage_monitor import ResourceUsageMonitor
@@ -33,9 +34,7 @@ class ApplicationManager(multiprocessing.Process):
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
-                                        log_configurations=self._log_settings,
-                                        directory='logs',
-                                        directory_path='AC results')
+                                        log_configurations=self._log_settings)
         self.__logger.debug("logger is configured.")
         self.__application_manager_response_queue = am_response_queue
         self.__actions = actions
@@ -117,7 +116,7 @@ class ApplicationManager(multiprocessing.Process):
         # get the outputs until the application is finished
         while True:
             try:
-                self.__logger.info(f"Application <{application} is still running.")
+                self.__logger.info(f"Application <{application} is running.")
                 # Checking for peremptory finishing request
                 if self.__kill_event.is_set() or self.__stop_event.is_set():
                     self.__logger.info(f"going to signal PID={popen_process_pid} "
@@ -187,10 +186,15 @@ class ApplicationManager(multiprocessing.Process):
                 get_resource_usage_stats(return_code)
             self.__logger.debug(f"Resource Usage stats: "
                                 f"{resources_usage_by_popen_process.items()}")
-            # write metrics to Database (i.e. a file at the moment)
-            metrics_output_directory = \
-                self._configurations_manager.make_directory(
-                    'Resource usage metrics', directory_path='AC results')
+            try:
+                metrics_output_directory = \
+                    self._configurations_manager.get_directory(
+                        DefaultDirectories.MONITORING_DATA)
+            except KeyError:
+                metrics_output_directory = \
+                    self._configurations_manager.make_directory(
+                        'Resource usage metrics', directory_path='AC results')
+
             metrics_file = os.path.join(metrics_output_directory,
                                         f'pid_{popen_process_pid}'
                                         '_resource_usage_metrics.json')

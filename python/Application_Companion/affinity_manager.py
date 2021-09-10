@@ -27,10 +27,7 @@ class AffinityManager:
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
-                                        log_configurations=self._log_settings,
-                                        directory='logs',
-                                        directory_path='AC results'
-                                        )
+                                        log_configurations=self._log_settings)
         self.__logger.debug("logger is configured.")
         self.__platfrom = Platform()
         if available_cpu_cores:

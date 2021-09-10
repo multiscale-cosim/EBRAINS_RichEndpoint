@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<settings>
+    <!-- A Version 4 UUID that is generated using a random number. -->
+    <uuid>53c6e003-743b-4ddf-bd31-c377143f4174</uuid>
+    <version>1.0</version>
+    <!-- The path to co-simulation outputs is defined here.
+    The output directories (such as results, logs, figures etc) will be
+    nested inside this location. The followings is provided as a working example.
+    It can be replaced with for example ${TARGET_LOCATION}/TVB-NEST/outputs-->
+    <output_directory>RICHENDPOINT_outputs</output_directory>
+    <log_configurations>
+        <version>1</version>
+        <disable_existing_loggers>False</disable_existing_loggers>
+        <formatters>
+            <default>
+                <format>%(asctime)s %(levelname)s %(name)s [%(processName)s:%(process)d] %(message)s</format>
+            </default>
+            <verbose>
+                <format>%(asctime)s %(levelname)s %(name)s [%(processName)s:%(process)d] [%(threadName)s:%(thread)d] [%(filename)s:%(funcName)s:%(lineno)d] %(message)s</format>
+            </verbose>
+        </formatters>
+        <handlers>
+            <console>
+                <class>logging.StreamHandler</class>
+                <level>INFO</level>
+                <formatter>default</formatter>
+                <stream>ext://sys.stdout</stream>
+            </console>
+            <info_file>
+                <class>logging.FileHandler</class>
+                <level>INFO</level>
+                <formatter>default</formatter>
+                <filename>co_sim_default_logs.log</filename>
+            </info_file>
+            <error_file>
+                <class>logging.handlers.RotatingFileHandler</class>
+                <level>ERROR</level>
+                <formatter>verbose</formatter>
+                <filename>co_sim_default_error_logs.log</filename>
+            </error_file>
+        </handlers>
+        <loggers>{}</loggers>
+            <root>
+                <level>DEBUG</level>
+                <handlers>
+                    <handlers>console</handlers>
+                    <handlers>info_file</handlers>
+                    <handlers>error_file</handlers>
+                </handlers>
+                <propagate>no</propagate>
+            </root>
+    </log_configurations>
+</settings>
