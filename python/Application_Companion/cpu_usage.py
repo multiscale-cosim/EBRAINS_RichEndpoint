@@ -17,6 +17,7 @@ import os
 class CPUUsage:
     '''
     Provides the average usage of the CPU in percentage by a specific process.
+    TODO add support for CPU usage in time windows.
     '''
     def __init__(self, process_id,
                  log_settings,
@@ -57,8 +58,9 @@ class CPUUsage:
         self.__logger.debug(f'USER_HZ: {user_hz}')
         return user_hz
 
+    # NOTE: This function is particularly useful in user space frequency.
+    # uncomment if needed.
     # def __get_current_clock_frequency(self):
-    # NOTE: This  function is particularly useful in user space frequency
     # scaling settings.
     #     with open("/proc/cpuinfo", "r") as fp:
     #         for line in self.__generate_line_that_contains("cpu MHz", fp):

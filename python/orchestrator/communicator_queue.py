@@ -25,16 +25,14 @@ class CommunicatorQueue(CommunicatorBaseClass):
     the underlying communication protocol. This class provides wrappers
     for inter process communication using python Queues.
     '''
-    # def __init__(self, log_settings, configurations_manager,
-    #              signal_manager) -> None:
     def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        # self.__signal_manager = signal_manager
-        self.__signal_manager = SignalManager(self._log_settings, self._configurations_manager)
+        self.__signal_manager = SignalManager(
+                                        self._log_settings, self._configurations_manager)
         signal.signal(signal.SIGINT,
                       self.__signal_manager.interrupt_signal_handler
                       )
@@ -61,8 +59,6 @@ class CommunicatorQueue(CommunicatorBaseClass):
         while True:
             # wait until an event is retrieved
             # or the process is forcefully quit
-            import os
-            # self.__logger.critical(f'stop:{self.__stop_event.is_set()}; kill:{self.__kill_event.is_set()}, endpoint: {os.getpid()}')
             if self.__stop_event.is_set() or self.__kill_event.is_set():
                 self.__logger.critical('quitting forcefully!')
                 return EVENT.FATAL
@@ -97,7 +93,8 @@ class CommunicatorQueue(CommunicatorBaseClass):
             self.__logger.debug('message is sent.')
             return Response.OK
         except queue.Full:
-            self.__logger.error(f'{endpoint_queue} is full.')
+            self.__logger.exception(f'{endpoint_queue} is full.',
+                                    exc_info=True)
             return Response.ERROR
 
     def broadcast_all(self, message, endpoints_queues):
@@ -125,5 +122,5 @@ class CommunicatorQueue(CommunicatorBaseClass):
                 self.__logger.debug(f'sent {message} to {endpoint_queue}')
             return Response.OK
         except queue.Full:
-            self.__logger.error(f'{endpoint_queue} is full.')
+            self.__logger.exception(f'{endpoint_queue} is full.')
             return Response.ERROR

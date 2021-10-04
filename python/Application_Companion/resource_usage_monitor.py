@@ -29,7 +29,6 @@ class ResourceUsageMonitor:
                  configurations_manager,
                  pid, bind_with_cores,
                  poll_interval=1.0,  # default is 1 second
-                 stop_event=None,
                  ):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -37,21 +36,17 @@ class ResourceUsageMonitor:
                                         name=__name__,
                                         log_configurations=self._log_settings)
         self.__logger.debug("logger is configured.")
-        if stop_event is None:
-            self._stop_event = threading.Event()
-        else:
-            self._stop_event = stop_event
-
+        self._stop_event = threading.Event()
         self.__process_id = pid
         self.__cpu_usage_stats = []
         self.__memory_usage_stats = []
         self._poll_interval = poll_interval
-        self.__process = Process(log_settings=self._log_settings,
-                                 configurations_manager=self._configurations_manager,
+        self.__process = Process(self._log_settings,
+                                 self._configurations_manager,
                                  pid=self.process_id)
-        # flag to stop monitoring to be set by Application Manager
+        # flag to stop monitoring
         self.keep_monitoring = True
-        self.__threads_started = []
+        self.__currently_running_threads = None
         self.__cpu_usage_monitoring_done = False
         self.__memory_usage_monitoring_done = False
         self.__monitors = [
@@ -122,7 +117,6 @@ class ResourceUsageMonitor:
         # keep monitoring until the process finishes
         while self.keep_monitoring:  # flag is set by Application Manager
             current_memory_usage = self.__process.get_memory_stats()
-            # self.__memory_usage_stats.append(current_memory_usage)
             self.__process.memory_usage_stats.append(current_memory_usage)
             time.sleep(self._poll_interval)
         self.__memory_usage_monitoring_done = True
@@ -144,19 +138,21 @@ class ResourceUsageMonitor:
         This ensures the extensibility to add more resources to be monitored
         as monitoring jobs.
         '''
-        for monitoring_job in self.__monitors:
-            monitor = threading.Thread(name=monitoring_job[0],
-                                       target=monitoring_job[1])
+        for monitor_name, monitoring_target in self.__monitors:
+            monitor = threading.Thread(name=monitor_name,
+                                       target=monitoring_target)
             # run it non-invasively in the background without blocking the
             # Application Manager
             monitor.daemon = True
             monitor.start()
         # keep track of running threads
-        self.__threads_started.append(threading.enumerate())
+        # NOTE this also includes the main thread.
+        self.__currently_running_threads = threading.enumerate()
         self.__logger.debug(f"currently active threads:"
-                            f"{self.__threads_started}")
-        if(len(self.__threads_started[0]) == (len(self.__monitors)+1)):
-            self.__logger.debug('monitoring deamon thread started.')
+                            f"{self.__currently_running_threads}")
+        # test if monitoring threads are running
+        if(len(self.__currently_running_threads) == threading.active_count()):
+            self.__logger.debug('monitoring deamon threads started.')
             return Response.OK
         else:
             return Response.ERROR

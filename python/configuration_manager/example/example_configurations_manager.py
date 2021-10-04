@@ -48,7 +48,7 @@ if __name__ == '__main__':
     example_logger = configurations_manager.load_log_configurations(name='example_logger',
                                                                     log_configurations=logger_settings,
                                                                     directory='example_logs_directory',
-                                                                    directory_path=dir_path)
+                                                                    path_to_directory=dir_path)
 
     # emit logs
     example_logger.info("customized location: logger is configured!")

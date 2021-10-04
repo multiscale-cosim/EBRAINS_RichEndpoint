@@ -33,8 +33,6 @@ class HealthStatusKeeper:
         self.__service_registry_manager = service_registry_manager
         # instantiate the health and status data object,
         self.__health_status = HealthStatus()
-        # set the workflow system uptime
-        # self.__health_status.uptime = datetime.now()
         # instantiate the health and status monitor
         self.__health_status_monitor = HealthStatusMonitor(
                                             self._log_settings,
@@ -81,7 +79,10 @@ class HealthStatusKeeper:
         """
         all_components, components_with_states =\
             self.__health_status_monitor.validate_local_states()
+        # Case all components are UP and in the same state
         if all_components and components_with_states:
+            # update the global state as the current local state
+            # of the componenets
             self.__update_state(components_with_states[0].current_state)
             # update the last check timestamp
             self.__update_last_health_updated()

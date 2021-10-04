@@ -32,20 +32,17 @@ class HealthStatusMonitor:
         # proxy to registry service
         self.__service_registry_manager = service_registry_manager
         self.__network_delay = network_delay
-        # boolean flag to indicate the inconsistency in local states
-        # for transitioning the global state to ERROR
-        self.__is_confirmed = False
-        # counter to re-check the local states
-        # before transitioning the global state to ERROR
-        self.__counter = 3  # TODO: set from XML file
+        # counter to rule out the network delay before transitioning the
+        # global state to ERROR
+        self.__counter = 2  # TODO set value from configuration file
         # keep track of started threads
-        self.__threads_started = []
+        self.__threads_started = None
         self.__keep_monitoring = None
         self.__logger.debug("initialized.")
 
     def __all_status_up(self, target_components):
         """"
-        helper function to check the current local status of all components.
+        helper function to check the current local statuses of all components.
         Returns boolean value indicating whether all current local
         statuses are UP.
         """
@@ -74,6 +71,7 @@ class HealthStatusMonitor:
         # fetch all components from registry
         all_components = self.__service_registry_manager.find_all()
         components_with_states = []
+        # Case, all components are UP
         if self.__all_status_up(all_components):
             self.__logger.debug('all components are UP.')
             # Filter the components which do not have states
@@ -83,10 +81,13 @@ class HealthStatusMonitor:
                     components_with_states.append(component)
             self.__logger.debug(f'all componenets: {all_components}; '
                                 f'with states: {components_with_states}')
+            # check if all components are in same state
             if self.__all_have_same_state(components_with_states):
                 return all_components, components_with_states
             else:
                 return None, None
+
+        # Case, some component is DOWN
         else:
             # find which components are DOWN
             components_not_running = []
@@ -104,37 +105,47 @@ class HealthStatusMonitor:
         # stop monitoring
         self.__keep_monitoring = False
 
+    def __trigger_alarm(self):
+        self.__logger.critical('Inconsistent local states. '
+                               'Triggering an alarm!')
+        signal.alarm(1)  # set alarm signal
+
     def __monitor_health_status(self):
         '''
         Monitors the current status and the current state of each component.
         Raises an alarm signal, if local states are in-consistent.
         '''
+        # set counter to stop rechecking to ruling out the network delay
         counter = self.__counter
-        while self.keep_monitoring:
-            # local states are not the same, or statuses are not up.
+        while self.__keep_monitoring:
+            # Case a, local states are not the same or all statuses are not UP
             if self.validate_local_states() == (None, None):
-                counter = counter - 1
-                if not counter:
-                    self.__is_confirmed = True
-                if self.__is_confirmed:
-                    self.__logger.critical(
-                        'Triggering an alarm! inconsistent local states.')
-                    signal.alarm(1)  # set alarm signal
+                if counter == 0:  # network delay is ruled out
+                    # trigger alarm
+                    self.__trigger_alarm()
                     # stop monitoring
-                    self.__keep_monitoring = False
-                    continue
-                else:
-                    self.__logger.critical('inconsistent states. re-checking!')
-                    # let the component update its state in registry
-                    time.sleep(self.__network_delay)
-                    continue
-            else:  # all local states are same, and statuses are up.
-                # reset counter
-                counter = self.__counter
-                # sleep until next check
+                    self.finalize_monitoring()
+                    # exit to terminate
+                    break
+
+                # otherwise, let the component update its state in registry
                 time.sleep(self.__network_delay)
+                # re-check to rule-out the network delay
+                self.__logger.critical(f'inconsistent local states. '
+                                       f're-checking counter: {counter}')
+                counter = counter - 1
                 continue
-        self.__logger.critical('stop monitoring.')
+
+            # Case b, all local states are same, and statuses are UP.
+            # reset counter
+            counter = self.__counter
+            # sleep until next check
+            time.sleep(self.__network_delay)
+            # keep monitoring
+            continue
+
+        # monitoring is terminated
+        self.__logger.critical('stopped monitoring.')
 
     def start_monitoring(self):
         '''
@@ -151,11 +162,13 @@ class HealthStatusMonitor:
         # boolean flag to keep monitoring until the globals state is ERROR
         self.__keep_monitoring = True
         health_status_monitor.start()
-        # keep track of all threads
-        self.__threads_started.append(threading.enumerate())
+        # keep track of running threads
+        # NOTE this also includes the main thread.
+        self.__threads_started = threading.enumerate()
         self.__logger.debug(f"list threads:"
                             f"{self.__threads_started}")
-        if(len(self.__threads_started[0]) == threading.active_count()):
+        # test if monitoring threads are running
+        if(len(self.__threads_started) == threading.active_count()):
             self.__logger.debug('monitoring deamon thread started.')
             return Response.OK
         else:

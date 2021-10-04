@@ -48,7 +48,7 @@ def naive_mxm(N=300):
     # print(f'matrixA = {matrixA}')
     matrixB = create_random_matrix(N)
     # print(f'matrixB = {matrixB}')
-    print('staring {N} x {N} matrix multiplication')
+    print(f'staring {N} x {N} matrix multiplication')
     matrixC = _mxm(matrixA, matrixB, N)
     # print(f'matrixC = {matrixC}')
     print('done mxm!')

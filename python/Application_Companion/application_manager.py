@@ -13,9 +13,11 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
-from python.configuration_manager.default_directories_enum import DefaultDirectories
 import subprocess
 import time
+import signal
+from signal_manager import SignalManager
+from python.configuration_manager.default_directories_enum import DefaultDirectories
 from resource_usage_monitor import ResourceUsageMonitor
 from common_enums import Response
 from db_manager_file import DBManagerFile
@@ -24,10 +26,18 @@ from affinity_manager import AffinityManager
 
 class ApplicationManager(multiprocessing.Process):
     """
-    Executes the application as a child process and monitors its resource usage
+    i).  Executes the action (application) as a child process,
+    ii). Monitors its resource usage, and
+    iii) Save the monitoring data to files.
     """
-    def __init__(self, log_settings, configurations_manager, actions,
-                 am_response_queue, stop_event, kill_event,
+    def __init__(self,
+                 # Dependency Injection for setting up the uniform log settings
+                 log_settings, configurations_manager,
+                 # actions (applications) to be launched
+                 actions,
+                 # proxy to shared queue for sending the responses
+                 am_response_queue,
+                 # flag to enable/disable resource usage monitoring
                  enable_resource_usage_monitoring=True):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
@@ -35,169 +45,390 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        self.__logger.debug("logger is configured.")
         self.__application_manager_response_queue = am_response_queue
         self.__actions = actions
-        self.__stop_event = stop_event
-        self.__kill_event = kill_event
-        self.__db_manager_file = DBManagerFile(
-            self._log_settings, self._configurations_manager)
+        # set up signal handeling for such as CTRL+C
+        self.__signal_manager = SignalManager(
+                                  log_settings=log_settings,
+                                  configurations_manager=configurations_manager
+                                  )
+        signal.signal(signal.SIGINT,
+                      self.__signal_manager.interrupt_signal_handler
+                      )
+        signal.signal(signal.SIGTERM,
+                      self.__signal_manager.kill_signal_handler
+                      )
+        # event to record that SIGINT signal is captured
+        self.__stop_event = self.__signal_manager.shut_down_event
+        # event to record that SIGTERM signal is captured
+        self.__kill_event = self.__signal_manager.kill_event
+        self.__is_monitoring_enabled = enable_resource_usage_monitoring
+        # if monitoring is enabled, then initialize monitoring data handler
+        if self.__is_monitoring_enabled:
+            # NOTE monitoring data is dumped in to JSON files
+            # initialize JSON files handler
+            self.__db_manager_file = DBManagerFile(
+                self._log_settings, self._configurations_manager)
+        # initialize AffinityManager for handling affinity settings
         self.__affinity_manager = AffinityManager(
             self._log_settings, self._configurations_manager)
-        # bind the application manager to single core (i.e core 1) only
+        # bind the Application Manager to a single core (i.e core 1) only
+        # so not to interrupt the execution of the action (application)
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
-        self.__process_id = os.getpid()
-        self.__affinity_manager.set_affinity(self.__process_id,
-                                             self.__bind_to_cpu)
-        self.__legitimate_cpu_cores = self.__affinity_manager.available_cpu_cores
-        self.__is_monitoring_enabled = enable_resource_usage_monitoring
+        # get available CPU cores to execute the application
+        self.__legitimate_cpu_cores =\
+            self.__affinity_manager.available_cpu_cores
+        self.__popen_process = None
+        self.__resource_usage_monitor = None
         self.__logger.debug("Application Manager is initialized.")
 
-    def run(self):
-        """
-        represents the application manager's main activity.
-        executes the application and monitors its resource usage.
-        """
-        # fetch the application to be executed
-        application = self.__actions.get('action')
-        # fetch the application parameters
-        application_args_list = self.__actions.get('args')
+    def __set_affinity(self, pid):
+        '''
+        helper function to bind the application to a set of CPUs.
+
+        Parameters
+        ----------
+        pid : int
+            process PID
+
+        Returns
+        ------
+        int
+            return code indicating whether or not the affinity is set
+        '''
+        # NOTE: core 1 is bound to the application manager itself,
+        # rest are bound to the main application.
+        bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
+                                     self.__legitimate_cpu_cores))
+        return self.__affinity_manager.set_affinity(pid, bind_with_cores)
+
+    def __launch_application(self, application, application_args):
+        '''
+        helper function to launch the application with arguments provided.
+
+        Parameters
+        ----------
+        application : str
+            application to be launched
+
+        application_args: str
+            arguments to the application
+
+        Returns
+        ------
+        int
+            return code indicating whether or not the application is launched
+        '''
+        # Turn-off output buffering for the child process
+        os.environ['PYTHONUNBUFFERED'] = "1"
+        # 1. run the application
         try:
-            # Turn-off output buffering for the child process
-            os.environ['PYTHONUNBUFFERED'] = "1"
-            self.__logger.debug(f'application:{application},\
-                            parameters:{application_args_list}')
-            # run the application
-            popen_process = subprocess.Popen(
-                                    [application, application_args_list],
+            self.__popen_process = subprocess.Popen(
+                                    [application, application_args],
                                     stdin=None,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE,
-                                    shell=False
-                                    )
-            popen_process_pid = popen_process.pid
-            # bind the application to set of CPUs
-            # NOTE: core 1 is bound to the application manager,
-            #  rest are bound to the application.
-            bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
-                                         self.__legitimate_cpu_cores+1))
-            self.__affinity_manager.set_affinity(popen_process_pid,
-                                                 bind_with_cores)
-            # resource usage monitoring
-            if self.__is_monitoring_enabled:
-                resource_usage_monitor = ResourceUsageMonitor(
-                        log_settings=self._log_settings,
-                        configurations_manager=self._configurations_manager,
-                        pid=popen_process_pid,
-                        bind_with_cores=self.__affinity_manager.get_affinity(
-                            popen_process_pid))
-                resource_usage_monitor.start_monitoring()
-                self.__logger.debug("started monitoring the resource usage.")
+                                    shell=False)
+            # let the application completes its setup for execution
+            time.sleep(0.001)
+        # Case a, launching is failed and raises an exception such as OSError
+        # or ValueError
+        except Exception:
+            # log the exception with traceback
+            self.__logger.exception(f'Could not run <{application}>.')
+            # return with error to terminate loudly
+            return Response.ERROR
 
-        except OSError as os_error_e:
-            self.__logger.error(f'Application {application} could not be run.')
-            self.__logger.error(f'OSError: {os_error_e.strerror}')
-            self.__application_manager_response_queue.put(Response.ERROR)
-            return Response.ERROR
-        except ValueError:
-            self.__logger.error(f"Application {application} reports "
-                                f"Popen arguments error")
-            self.__logger.error(f'ValueError: {application_args_list}')
-            self.__application_manager_response_queue.put(Response.ERROR)
-            return Response.ERROR
-        else:
-            self.__logger.info(f"Application <{application}>"
-                               f"is started execution successfully.")
-            self.__logger.debug(f"PPID={os.getpid()},PID={popen_process_pid} "
-                                f" is running Application <{application}>")
-        poll_rc = None
-        stdout_line = None
-        stderr_line = None
-        # get the outputs until the application is finished
-        while True:
+        # Case b, application is launched.
+        self.__logger.debug(f'<{application}> is launched.')
+
+        # 2. set the affinity for the application
+        if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
+            # affinity could not be set, log exception with traceback
             try:
-                self.__logger.info(f"Application <{application} is running.")
-                # Checking for peremptory finishing request
-                if self.__kill_event.is_set() or self.__stop_event.is_set():
-                    self.__logger.info(f"going to signal PID={popen_process_pid} "
-                                    f"to terminate")
-                    popen_process.terminate()
-                    os.sched_yield()
-                    time.sleep(0.001)  # let the Popen process to finish
-                    try:
-                        popen_process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        self.__logger.info(f"will signal PID={popen_process_pid} "
-                                        f"to be forced to quit")
-                        # quit the process forcefully
-                        popen_process.kill()
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception(
+                            self.__logger,
+                            f'affinity could not be set for <{application}>:'
+                            f'{self.__popen_process.pid}')
+            # NOTE: application is launched with no defined affinity mask
 
-                    # whether the process finishes
-                    stopping_rc = popen_process.poll()
-                    if stopping_rc is None:
-                        self.__logger.info(f"could not conclude the process "
-                                           f"PID={popen_process.pid}")
-                    else:
-                        self.__logger.info(f"concluded PID={popen_process_pid} "
-                                           f"which returns rc={stopping_rc}")
-                    break
-                # Process the Popen stdout and stderr outcomes
-                try:
-                    poll_rc = popen_process.poll()
-                    stdout_line = popen_process.stdout.readline()
-                    stderr_line = popen_process.stderr.readline()
-                except KeyboardInterrupt:
-                    self.__logger.info(f"KeyboardInterrupt caught by application "
-                                       f"<{application}>")
-                    continue
-                if poll_rc is not None and not stdout_line and not stderr_line:
-                    # spawned action has finished and there is no more bytes
-                    # on the stdout stderr to be gathered
-                    # leave the get output loop
-                    break
-
-                if stdout_line:
-                    # get line from application output stream
-                    self.__logger.info(f"{application}: "
-                                       f"{stdout_line.strip()}")
-                if stderr_line:
-                    # error reported by the application
-                    self.__logger.error(f"{application}: "
-                                        f"{stderr_line.strip()}")
-                # relinquishing the CPU window time for a while
-                os.sched_yield()
-            except KeyboardInterrupt:
-                self.__logger.info(f"KeyboardInterrupt caught by application "
-                                   f"<{application}>")
-                continue
-
-        # The application finishes
-        return_code = popen_process.poll()
-        if not return_code == 0:
-            self.__logger.error(f"application {application} execution went "
-                                f"wrong, finished returning rc={return_code}")
-            self.__application_manager_response_queue.put(Response.ERROR)
-
-        self.__logger.info(f'Application <{application}> finished properly.')
-        # stop resource monitoring
+        # 3. start resource usage monitoring, if enabled
         if self.__is_monitoring_enabled:
-            resource_usage_monitor.keep_monitoring = False
-            resources_usage_by_popen_process = resource_usage_monitor.\
-                get_resource_usage_stats(return_code)
+            # get affinity mask
+            bind_with_cores = self.__affinity_manager.get_affinity(
+                        self.__popen_process.pid)
+            # initialize resource usage monitor
+            self.__resource_usage_monitor = ResourceUsageMonitor(
+                                                self._log_settings,
+                                                self._configurations_manager,
+                                                self.__popen_process.pid,
+                                                bind_with_cores)
+            # start monitoring
+            # Case a, monitoring could not be started
+            if self.__resource_usage_monitor.start_monitoring() ==\
+                    Response.ERROR:
+                try:
+                    # raise runtime exception
+                    raise(RuntimeError)
+                except RuntimeError:
+                    # log the exception with traceback details
+                    self.__logger.exception(
+                                self.__logger,
+                                f'Could not start monitoring for '
+                                f'<{application}>: {self.__popen_process.pid}')
+
+        # Case b, monitoring is started
+        self.__logger.debug("started monitoring the resource usage.")
+
+        # Everything goes right
+        self.__logger.info(f'Application <{application}> starts execution.')
+        self.__logger.debug(f"PID:{os.getpid()} is executing the application "
+                            f"<{application}>, PID={self.__popen_process.pid}")
+        return Response.OK
+
+    def __stop_preemptory(self):
+        '''helper function to terminate the application forcefully.'''
+        if self.__kill_event.is_set() or self.__stop_event.is_set():
+            self.__logger.info(f"going to signal "
+                               f"PID={self.__popen_process.pid}"
+                               f" to terminate.")
+            self.__popen_process.terminate()
+            time.sleep(0.001)  # let the Popen process be finished
+            try:
+                self.__popen_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                # Could not terminate the process,
+                # send signal to forcefully kill it
+                self.__logger.info(f"going to signal "
+                                   f"PID={self.__popen_process.pid} "
+                                   f"to forcefully quit.")
+                # quit the process forcefully
+                self.__popen_process.kill()
+
+            # check whether the process finishes
+            exit_status = self.__popen_process.poll()
+            # Worst Case, process could not be terminated/killed
+            if exit_status is None:
+                try:
+                    # raise runtime exception
+                    raise(RuntimeError)
+                except RuntimeError:
+                    # log the exception with traceback details
+                    self.__logger.exception(
+                                            self.__logger,
+                                            f"could not terminate the process "
+                                            f"PID={self.__popen_process.pid}")
+                # send response to terminate with error
+                return Response.ERROR
+
+            # Case, process is termianted/killed
+            self.__logger.info(f"terminated PID={self.__popen_process.pid}"
+                               f" exit_status={exit_status}")
+            return Response.OK
+
+    def __read_popen_pipes(self, application):
+        '''
+        helper function to read the outputs from the application.
+
+        Parameters
+        ----------
+        application : str
+            application which is launched
+
+
+        Returns
+        ------
+        int
+            return code indicating whether or not the outputs are read
+        '''
+        exit_status = None  # process exit status
+        stdout_line = None  # to read from output stream
+        stderr_line = None  # to read from error stream
+        # read until the process is running
+        while exit_status is None:
+            try:
+                self.__logger.debug(f'<{application}> is running.')
+                exit_status = self.__popen_process.poll()
+                stdout_line = self.__popen_process.stdout.readline()
+                stderr_line = self.__popen_process.stderr.readline()
+
+                # log the output received from the application
+                if stdout_line:
+                    self.__logger.info(f"{application}: {stdout_line.strip()}")
+                # log the error reported by the application
+                if stderr_line:
+                    self.__logger.error(f"{application}: {stderr_line.strip()}")
+
+                # Case, process is finished and there is nothing to read in the
+                # stdout and stderr streams.
+                if exit_status is not None and\
+                        not stdout_line and not stderr_line:
+                    # exit the loop
+                    break
+
+                # Otherwise, wait a bit to let the process proceed the execution
+                time.sleep(0.01)
+                # continue reading
+                continue
+            # just in case if process hangs on reading
+            except KeyboardInterrupt:
+                # log the exception with traceback
+                self.__logger.exception(f"KeyboardInterrupt caught by: "
+                                        f"<{application}>")
+                # terminate the application process preemptory
+                if self.__stop_preemptory() == Response.ERROR:
+                    # Case, process could not be terminated
+                    self.__logger.error(f'could not terminate <{application}>')
+                # terminate reading loop with ERROR
+                return Response.ERROR
+
+        # everything goes right i.e. application finished execution and
+        # outputs are read
+        return Response.OK
+
+    def __post_processing(self, exit_code):
+        '''
+        helper function to post process after application execution.
+
+        Parameters
+        ----------
+        exit code : int
+            exit code of the application
+
+        Returns
+        ------
+        int
+            return code indicating whether or not the post processing completes
+        '''
+        # conclude resource usage monitoring and save the data
+        if self.__is_monitoring_enabled:
+            # stop resource usage monitoring
+            self.__resource_usage_monitor.keep_monitoring = False
+            # retrieve resource usage statistics
+            resources_usage_by_popen_process = self.__resource_usage_monitor.\
+                get_resource_usage_stats(exit_code)
             self.__logger.debug(f"Resource Usage stats: "
                                 f"{resources_usage_by_popen_process.items()}")
+            # get directory to save the resource usage statistics
             try:
                 metrics_output_directory = \
                     self._configurations_manager.get_directory(
                         DefaultDirectories.MONITORING_DATA)
+                # exception raised, if default directory does not exist
             except KeyError:
+                # create a new directory
                 metrics_output_directory = \
                     self._configurations_manager.make_directory(
                         'Resource usage metrics', directory_path='AC results')
 
+            # path to JSON file for dumping the monitoring data
             metrics_file = os.path.join(metrics_output_directory,
-                                        f'pid_{popen_process_pid}'
+                                        f'pid_{self.__popen_process.pid}'
                                         '_resource_usage_metrics.json')
-            self.__db_manager_file.write(metrics_file, resource_usage_monitor.
-                                         get_resource_usage_stats(return_code))
+            # dump the monitoring data
+            self.__db_manager_file.write(
+                            metrics_file,
+                            resources_usage_by_popen_process)
+        return Response.OK
+
+    def run(self):
+        """
+        starts Application Manager for
+        i)   executing the application,
+        ii)  monitoring its resource usage, and
+        iii) reading the outputs from the application.
+        """
+        # flag to indicate if something goes wrong
+        terminate_with_error = False
+        # 1. set affinity
+        pid = os.getpid()
+        # Case a, affinity is not set
+        if self.__affinity_manager.set_affinity(
+                    pid, self.__bind_to_cpu) == Response.ERROR:
+            try:
+                # raise run time error exception
+                raise RuntimeError
+            except RuntimeError:
+                # log the exception with traceback
+                self.__logger.exception('Affinity could not be set.')
+
+        # 2. fetch the application to be executed
+        application = self.__actions.get('action')
+        # 3. fetch the application parameters
+        application_args = self.__actions.get('args')
+        self.__logger.debug(
+            f'application:{application}, parameters:{application_args}')
+
+        # 4. Launch application
+        if self.__launch_application(application,
+                                     application_args) == Response.ERROR:
+            # Case a, could not launch the application
+            try:
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception('Launching is failed. Quitting!')
+            # send error as response to Application Companion
+            self.__application_manager_response_queue.put(Response.ERROR)
+            # terminate with error
+            return Response.ERROR
+        # Case b, application is launched successfully
+        self.__logger.debug('application is launched.')
+
+        # 5. Read outputs from the application
+        if self.__read_popen_pipes(application) == Response.ERROR:
+            # Case a, could not read the outputs
+            terminate_with_error = True
+            try:
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception('error reading output')
+        # Case b, outputs are read successfully
+        self.__logger.debug('outputs are read.')
+
+        # 6. Check whether the application executed successfully
+        # get the exit code of the application
+        exit_code = self.__popen_process.poll()
+        #  Case a, something went wrong
+        if not exit_code == 0:
+            terminate_with_error = True
+            try:
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception(
+                                f"application <{application}> execution went "
+                                f"wrong, finished with rc = {exit_code}")
+        # Case b, application executed successfully
+        self.__logger.info(f'Application <{application}> finished properly.')
+
+        # 7. post processing
+        if self.__post_processing(exit_code) == Response.ERROR:
+            terminate_with_error = True
+            # Case a, Post processing fails
+            try:
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception('post processing fails.')
+        # Case b, post processing is done
+        self.__logger.info('post processing is done.')
+
+        # 8. send response to Application Companion
+        # Case a, something went wrong. Send ERROR as response.
+        if terminate_with_error:
+            self.__application_manager_response_queue.put(Response.ERROR)
+            return Response.ERROR
+
+        # Case b, everything  goes right. Send OK as response.
         self.__application_manager_response_queue.put(Response.OK)
+        return Response.OK
