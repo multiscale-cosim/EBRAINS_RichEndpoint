@@ -23,11 +23,8 @@ from python.orchestrator.poc_steering_menu import POCSteeringMenu
 
 
 class Launcher:
-<<<<<<< HEAD
     '''launches the all the necessary components to execute the workflow.'''
-=======
-    '''launches all the necessary components to execute the workflow.'''
->>>>>>> state_machine
+
     def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
