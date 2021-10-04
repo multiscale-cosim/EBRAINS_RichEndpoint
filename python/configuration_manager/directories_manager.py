@@ -43,7 +43,7 @@ class DirectoriesManager(metaclass=MetaDirectoriesManager):
         """
 
         # setup output directory at specified location
-        output_dir = self.__setup_output_directory("output", path)
+        output_dir = self.__setup_output_directory("outputs", path)
         # add default directory in dictionary
         self.__directories = ({DefaultDirectories.OUTPUT: output_dir})
         self.get_directory(DefaultDirectories.OUTPUT)
@@ -59,7 +59,7 @@ class DirectoriesManager(metaclass=MetaDirectoriesManager):
                                       DefaultDirectories.FIGURES.value)})
         self.__directories.update({DefaultDirectories.MONITORING_DATA:
                                   self.__make_default_directory(
-                                      DefaultDirectories.MONITORING_DATA.value)})
+                                    DefaultDirectories.MONITORING_DATA.value)})
         return output_dir
 
     def get_directory(self, directory):
@@ -77,6 +77,10 @@ class DirectoriesManager(metaclass=MetaDirectoriesManager):
     def __setup_output_directory(directory_name, path):
         """Creates the parent directory for outputs such as results,
         logs etc. at specified location.
+
+        NOTE the directory is created as
+        <user_name>_<directory_name>_<timestamp>
+        For example: FOO_outputs_2021-09-28-144735
 
         Parameters
         ----------

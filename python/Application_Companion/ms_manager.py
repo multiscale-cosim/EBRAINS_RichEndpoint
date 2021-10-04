@@ -11,8 +11,8 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
+import argument_parser
 from python.configuration_manager.configurations_manager import ConfigurationsManager
-from argument_parser import parse_command_line_arguments
 from python.launcher import Launcher
 
 
@@ -39,12 +39,10 @@ if __name__ == '__main__':
     logger.debug("logger is configured!")
     # get path to application to be executed
     logger.debug('parsing CLI args')
-    __CLI_args = parse_command_line_arguments()
+    __CLI_args = argument_parser.get_parsed_CLI_arguments()
     applications = [{'action': __CLI_args.app, 'args': __CLI_args.param},
-                    {'action': __CLI_args.app, 'args': '300'}]
+                    {'action': __CLI_args.app, 'args': __CLI_args.param}]
     logger.info(f'application to be executed: {applications}')
-
-
     launcher = Launcher(log_settings, configurations_manager)
     launcher.launch(applications)
 

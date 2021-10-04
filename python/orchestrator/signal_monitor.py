@@ -21,42 +21,46 @@ class SignalMonitor:
     Monitors and acts against the alarm signal that is raised due to global
     state ERROR.
     '''
-    def __init__(self, log_settings, configurations_manager,
-                 health_status_keeper, alarm_event,
-                 frequency=2):  # TODO: set monitoring frequency from XML
+    def __init__(self, log_settings,
+                 configurations_manager,
+                 alarm_event,
+                 monitoring_frequency=5):  # TODO: set monitoring frequency from XML
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        self.__health_status_keeper = health_status_keeper
-        self.__frequency = frequency
-        self.__threads_started = []  # keep track of started threads
+        self.__monitoring_frequency = monitoring_frequency
+        self.__threads_started = None
         self.__alarm_event = alarm_event
-        # self.__stop_monitoring = False
-        # self.__stop_monitoring = multiprocessing.Event()
         self.__logger.debug("signal monitor is initialized.")
 
     def __monitor(self):
         '''
         Target function for monitoring thread to keep monitoring if the alarm
-        event is set. If it is set, then
+        event is set due to global state ERROR. If it is set, then
         i)   Re-check the global state to rule out network delay,
         iii) Raise signal Interupt if global state is ERROR after recheck,
         iv)  Stop monitoring.
         '''
         while True:
+            # Case a, alarm is triggered and captured
             if self.__alarm_event.is_set():
-                self.__logger.critical('re-checking the global state.')
-                if self.__health_status_keeper.update_global_state() ==\
-                        Response.ERROR:
-                    self.__logger.critical('Global state ERROR.')
-                    self.__logger.critical('Raising Terminate Signal')
-                    signal.raise_signal(signal.SIGINT)
-                    self.__logger.critical('stop monitoring.')
-                    break
-            time.sleep(self.__frequency)
+                self.__logger.critical('Global state ERROR.')
+                self.__logger.critical('Raising Terminate Signal')
+                # raise signal so Orchestrator terminate the workflow
+                signal.raise_signal(signal.SIGINT)
+                # stop monitoring
+                break
+
+            # Case b, alarm  is not yet triggered
+            # go to sleep before a re-check
+            time.sleep(self.__monitoring_frequency)
+            # check if alarm is triggered
             continue
+
+        # signal is raised and montitoring is stopped
+        self.__logger.critical('stopped monitoring.')
 
     def start_monitoring(self):
         '''
@@ -71,12 +75,13 @@ class SignalMonitor:
         # without blocking the health_status_keeper
         alarm_signal_monitor.daemon = True
         alarm_signal_monitor.start()
-        # self.__stop_monitoring = multiprocessing.Event()
         # keep track of all threads
-        self.__threads_started.append(threading.enumerate())
+        # NOTE this also includes the main thread.
+        self.__threads_started = threading.enumerate()
         self.__logger.debug(f"list threads:"
                             f"{self.__threads_started}")
-        if(len(self.__threads_started[0]) == threading.active_count()):
+        # test if monitoring threads are running
+        if(len(self.__threads_started) == threading.active_count()):
             self.__logger.debug('monitoring deamon thread started.')
             return Response.OK
         else:

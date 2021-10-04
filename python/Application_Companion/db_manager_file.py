@@ -34,4 +34,4 @@ class DBManagerFile(DBManagerBaseClass):
         with open(file, "w") as data_file:
             json.dump(data, data_file, indent=4)
             self.__logger.info(f'data is written to file: {file}!')
-            return Response.ERROR
+            return Response.OK

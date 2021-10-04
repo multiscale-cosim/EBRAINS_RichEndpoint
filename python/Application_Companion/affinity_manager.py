@@ -10,7 +10,6 @@
 # Division: High Performance Computing in Neuroscience
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
-#
 # ------------------------------------------------------------------------------
 import os
 from underlying_platform import Platform
@@ -21,21 +20,16 @@ class AffinityManager:
     """
     Facilitates to manipulate with the affinity mask for a process.
     """
-    def __init__(self, log_settings, configurations_manager,
-                 available_cpu_cores=0) -> None:
+    def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        self.__logger.debug("logger is configured.")
         self.__platfrom = Platform()
-        if available_cpu_cores:
-            # restrict the process to the user specified set of CPUs
-            self.__available_cpu_cores = available_cpu_cores
-        else:
-            # restrict to the CPUs available in the platform
-            self.__available_cpu_cores = self.__platfrom.number_of_CPU_cores
+        # CPU cores available on this platform
+        self.__available_cpu_cores = self.__platfrom.number_of_CPU_cores
+        self.__logger.debug("Affinity Manager is initialized.")
 
     @property
     def available_cpu_cores(self): return self.__available_cpu_cores
@@ -57,16 +51,32 @@ class AffinityManager:
         int
             return code
         """
+        # Case, affinity mask exceed to the available CPU cores
         if self.available_cpu_cores < len(affinity_mask):
             self.__logger.error(
-                f"cannot map {affinity_mask} to the"
-                "available CPU cores: {self.available_cpu_cores}")
+                f"cannot map {affinity_mask} to the "
+                f"available CPU cores: {self.available_cpu_cores}")
             return Response.ERROR
-        else:
+
+        # Otherwise, set the affinity
+        try:
             os.sched_setaffinity(process_id, affinity_mask)
+        except Exception:  # if affinity mask is e.g. type or value error
+            # log exception with traceback details
+            self.__logger.exception('Got exception when setting the affinity.')
+            return Response.ERROR
+
+        # check if affinity is set
+        currently_running_on_CPUs = self.get_affinity(process_id)
+        if currently_running_on_CPUs == affinity_mask:
             self.__logger.info(f"{process_id} is bound to CPU cores: "
-                               f"{self.get_affinity(process_id)}")
+                               f"{currently_running_on_CPUs}")
             return Response.OK
+
+        # return with error if affinity is not set
+        self.__logger.error(f"{process_id} can not be bound to "
+                            f"CPU cores: {affinity_mask}")
+        return Response.ERROR
 
     def get_affinity(self, process_id):
         """
@@ -81,6 +91,6 @@ class AffinityManager:
         Returns
         ------
         list
-            list of CPUs the process is restricted to
+            list of CPUs that the process is restricted to
         """
         return [*os.sched_getaffinity(process_id), ]

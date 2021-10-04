@@ -12,6 +12,7 @@
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import multiprocessing
+import time
 
 
 class SignalManager:
@@ -61,10 +62,13 @@ class SignalManager:
         # self.__gracefull_shutdown = True
 
         # We give possible external running application some time to shutdown
-        if self.__grace_period != 0:
+        if self.__grace_period > 0:
             grace_full_msg = (f'gracefull shutdown in {self.__grace_period}')
+            self.__logger.debug(f'sleeping for grace period: '
+                                f'{self.__grace_period} sec')
+            time.sleep(self.__grace_period)
         else:
-            grace_full_msg = ""  # TODO: proper message for hard exit
+            grace_full_msg = "Quitting forcefully without a grace period!"
         # log the unexpected behavior
         self.__logger.critical(f'Received a stop signal: {grace_full_msg}')
         self.__shut_down_event.set()

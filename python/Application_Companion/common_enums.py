@@ -30,14 +30,15 @@ class Response(enum.IntEnum):
     """ Enum class for responses """
     # TODO: extend responses for different types of errors and for each module
     OK = 0
-    ERROR = -1
+    ERROR = -100
 
 
 @enum.unique
 class EVENT(enum.IntEnum):
     """ Enum class for responses """
     # TODO: extend to support different event types
-    FATAL = -1
+    FATAL = -100
+    STATE_UPDATE_FATAL = -101
 
 
 @enum.unique

@@ -27,8 +27,11 @@ class ConfigLogger:
     @classmethod
     def __make_logging_config_compatible(cls, xml_dictionary,
                                          target_directory):
-        """Makes the logger settings compatible with the logging.config API.
-        Also, sets the destination of logs to specified log file at specified location.
+        """
+        Makes the logger settings defined in XML file
+        compatible with the logging.config API. Also,
+        sets the destination of logs to specified log
+        file at specified location.
         """
         # set the version as 1 (logging.config API requirement)
         dictionary_utils.set_in_dictionary(xml_dictionary, ['version'], 1)

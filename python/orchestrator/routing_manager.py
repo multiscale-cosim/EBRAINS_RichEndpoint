@@ -23,7 +23,7 @@ class Manager(BaseManager):
 
 # register ServiceRegistryManager class
 # all of its public methods are accessible via proxy
-Manager.register('RegistryManager', ServiceRegistryManager)
+Manager.register('get_registry_manager', ServiceRegistryManager)
 
 
 class RoutingManager:

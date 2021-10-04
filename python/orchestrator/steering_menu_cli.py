@@ -16,11 +16,12 @@ from python.Application_Companion.common_enums import SteeringCommands
 
 class SteeringMenuCLI:
     '''
-    Menu class for interacting with the user.
+    Menu class for interacting with the user via CLI.
     '''
 
     def __init__(self) -> None:
-        # setup menu
+        # setup a dictionary for menu handling as a key:value pair
+        # i.e. SteeringCommands.Enum: str (to display)
         self.__steering_menu = {
             SteeringCommands.INIT: "Setup synchronization",
             SteeringCommands.START: "Start",

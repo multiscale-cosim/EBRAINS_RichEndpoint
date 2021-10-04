@@ -13,7 +13,6 @@
 # ------------------------------------------------------------------------------
 import os
 
-
 class MemoryUsage:
     '''
     Provides the memory usage stats for a specific process.
@@ -102,14 +101,26 @@ class MemoryUsage:
                 # split into key, value
                 key, memory_kb = self.__split_values(line, ':')
                 # strip off "kB"
-                memory, _ = self.__split_values(memory_kb, ' ')
-                self.__memory_usage.setdefault(key, []).append(
-                    float(memory)/1024)  # convert to MiB
+                memory_in_KB, _ = self.__split_values(memory_kb, ' ')
+                try:
+                    # convert to MiB
+                    memory_in_MiB = float(memory_in_KB)/1024
+                    # save the memory usage in MiB
+                    self.__memory_usage.setdefault(key, []).append(
+                    memory_in_MiB)
+                except Exception:
+                    # if conversion fails for some reasons, then
+                    # log the exception with traceback
+                    self.__logger.exception('Could not covert memory in MiB.')
+                    # save the memory usage in KB
+                    self.__memory_usage.setdefault(key, []).append(
+                        memory_in_KB)
 
     def __sum_list_values(self, list_obj):
         return sum(list(map(float, list_obj)))
 
     def get_usage_stats(self):
+        # Case, file exists
         # read memory file and fill the metrics
         self.__get_current_memory_usage(self._path_to_read_stats)
         memory_usage = {k: self.__sum_list_values(self.__memory_usage[k])
