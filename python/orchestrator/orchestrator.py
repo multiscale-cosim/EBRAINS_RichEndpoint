@@ -436,15 +436,18 @@ class Orchestrator(multiprocessing.Process):
                     self.__logger.exception(
                         f'error executing: {current_steering_command}')
                 # terminate loudly with error
-                return self.__terminate_with_error()
+                self.__orchestrator_out_queue.put(self.__terminate_with_error())
+                return Response.ERROR
 
             # finish execution as normal after executing END command
             if current_steering_command == SteeringCommands.END:
                 # finish execution as normal
                 self.__logger.info('Concluding orchestration.')
+                self.__orchestrator_out_queue.put(Response.OK)
                 return Response.OK
 
             # Execution is not yet ended, fetch the next steering commands
+            self.__orchestrator_out_queue.put(Response.OK)
             continue
 
     def run(self):
@@ -456,7 +459,10 @@ class Orchestrator(multiprocessing.Process):
             # NOTE exceptions are already logged at source of failure
             self.__logger.error('Setting up runtime failed, Quitting!.')
             # terminate with error
+            self.__orchestrator_out_queue.put(Response.ERROR)
             return Response.ERROR
 
         # Runtime setup is done, start orchestration
+        # self.__orchestrator_out_queue.put(self.__command_control_and_coordinate())
         return self.__command_control_and_coordinate()
+        # return 0

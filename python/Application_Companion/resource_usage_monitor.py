@@ -13,9 +13,9 @@
 # ------------------------------------------------------------------------------
 import threading
 import time
-from process import Process
-from underlying_platform import Platform
-from common_enums import Response
+from python.Application_Companion.process import Process
+from python.Application_Companion.underlying_platform import Platform
+from python.Application_Companion.common_enums import Response
 
 
 class ResourceUsageMonitor:

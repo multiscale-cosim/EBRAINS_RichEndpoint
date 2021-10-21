@@ -12,7 +12,7 @@
 #
 # ------------------------------------------------------------------------------S
 import time
-from python.Application_Companion.common_enums import Response
+from python.Application_Companion.common_enums import Response, SteeringCommands
 from python.Application_Companion.application_companion import ApplicationCompanion
 from python.orchestrator.routing_manager import RoutingManager
 from python.orchestrator.command_control_service import CommandControlService
@@ -144,9 +144,14 @@ class Launcher:
             # terminate with error
             return Response.ERROR
 
-        orchestrator_component_in_queue, _ = orchestrator_component[0].endpoint
+        orchestrator_component_in_queue,  orchestrator_component_out_queue =\
+            orchestrator_component[0].endpoint
+
         # vii. launch the steering menu handler
         # NOTE: this is to demonstrate the POC of steering via CLI
-        poc_steering_menu = POCSteeringMenu()
-        poc_steering_menu.start_menu_handler(orchestrator_component_in_queue)
+        poc_steering_menu = POCSteeringMenu(self._log_settings,
+                                            self._configurations_manager)
+        poc_steering_menu.start_steering(
+                                orchestrator_component_in_queue,
+                                orchestrator_component_out_queue)
         return Response.OK

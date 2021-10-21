@@ -14,15 +14,15 @@
 import multiprocessing
 import os
 import signal
-from application_manager import ApplicationManager
-from common_enums import EVENT
-from common_enums import SteeringCommands
-from common_enums import Response
-from common_enums import SERVICE_COMPONENT_CATEGORY
-from common_enums import SERVICE_COMPONENT_STATUS
+from python.Application_Companion.application_manager import ApplicationManager
+from python.Application_Companion.common_enums import EVENT
+from python.Application_Companion.common_enums import SteeringCommands
+from python.Application_Companion.common_enums import Response
+from python.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from python.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
 from python.orchestrator.state_enums import STATES
 from python.orchestrator.communicator_queue import CommunicatorQueue
-from affinity_manager import AffinityManager
+from python.Application_Companion.affinity_manager import AffinityManager
 
 
 class ApplicationCompanion(multiprocessing.Process):

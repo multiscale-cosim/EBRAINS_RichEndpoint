@@ -14,7 +14,7 @@
 from __future__ import print_function
 import platform
 import os
-from cpu import CPU
+from python.Application_Companion.cpu import CPU
 
 
 class Platform:

@@ -12,8 +12,8 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import json
-from db_manager_base import DBManagerBaseClass
-from common_enums import Response
+from python.Application_Companion.db_manager_base import DBManagerBaseClass
+from python.Application_Companion.common_enums import Response
 
 
 class DBManagerFile(DBManagerBaseClass):

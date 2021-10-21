@@ -12,8 +12,8 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import os
-from underlying_platform import Platform
-from common_enums import Response
+from python.Application_Companion.underlying_platform import Platform
+from python.Application_Companion.common_enums import Response
 
 
 class AffinityManager:

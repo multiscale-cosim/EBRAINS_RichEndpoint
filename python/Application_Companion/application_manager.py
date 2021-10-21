@@ -16,12 +16,13 @@ import os
 import subprocess
 import time
 import signal
-from signal_manager import SignalManager
-from python.configuration_manager.default_directories_enum import DefaultDirectories
-from resource_usage_monitor import ResourceUsageMonitor
-from common_enums import Response
-from db_manager_file import DBManagerFile
-from affinity_manager import AffinityManager
+import fcntl
+from python.Application_Companion.signal_manager import SignalManager
+from default_directories_enum import DefaultDirectories
+from python.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
+from python.Application_Companion.common_enums import Response
+from python.Application_Companion.db_manager_file import DBManagerFile
+from python.Application_Companion.affinity_manager import AffinityManager
 
 
 class ApplicationManager(multiprocessing.Process):
@@ -47,6 +48,7 @@ class ApplicationManager(multiprocessing.Process):
                                         log_configurations=self._log_settings)
         self.__application_manager_response_queue = am_response_queue
         self.__actions = actions
+        self.__actions_id = None
         # set up signal handeling for such as CTRL+C
         self.__signal_manager = SignalManager(
                                   log_settings=log_settings,
@@ -102,7 +104,7 @@ class ApplicationManager(multiprocessing.Process):
                                      self.__legitimate_cpu_cores))
         return self.__affinity_manager.set_affinity(pid, bind_with_cores)
 
-    def __launch_application(self, application, application_args):
+    def __launch_application(self, application):
         '''
         helper function to launch the application with arguments provided.
 
@@ -110,9 +112,6 @@ class ApplicationManager(multiprocessing.Process):
         ----------
         application : str
             application to be launched
-
-        application_args: str
-            arguments to the application
 
         Returns
         ------
@@ -123,8 +122,14 @@ class ApplicationManager(multiprocessing.Process):
         os.environ['PYTHONUNBUFFERED'] = "1"
         # 1. run the application
         try:
+            # self.__popen_process = subprocess.Popen(
+            #                         [application, application_args],
+            #                         stdin=None,
+            #                         stdout=subprocess.PIPE,
+            #                         stderr=subprocess.PIPE,
+            #                         shell=False)
             self.__popen_process = subprocess.Popen(
-                                    [application, application_args],
+                                    application,
                                     stdin=None,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE,
@@ -135,12 +140,12 @@ class ApplicationManager(multiprocessing.Process):
         # or ValueError
         except Exception:
             # log the exception with traceback
-            self.__logger.exception(f'Could not run <{application}>.')
+            self.__logger.exception(f'Could not run <{self.__actions_id}>.')
             # return with error to terminate loudly
             return Response.ERROR
 
         # Case b, application is launched.
-        self.__logger.debug(f'<{application}> is launched.')
+        self.__logger.debug(f'<{self.__actions_id}> is launched.')
 
         # 2. set the affinity for the application
         if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
@@ -152,7 +157,8 @@ class ApplicationManager(multiprocessing.Process):
                 # log the exception with traceback details
                 self.__logger.exception(
                             self.__logger,
-                            f'affinity could not be set for <{application}>:'
+                            f'affinity could not be set for '
+                            f'<{self.__actions_id}>:'
                             f'{self.__popen_process.pid}')
             # NOTE: application is launched with no defined affinity mask
 
@@ -179,15 +185,17 @@ class ApplicationManager(multiprocessing.Process):
                     self.__logger.exception(
                                 self.__logger,
                                 f'Could not start monitoring for '
-                                f'<{application}>: {self.__popen_process.pid}')
+                                f'<{self.__actions_id}>: '
+                                f'{self.__popen_process.pid}')
 
         # Case b, monitoring is started
         self.__logger.debug("started monitoring the resource usage.")
 
         # Everything goes right
-        self.__logger.info(f'Application <{application}> starts execution.')
-        self.__logger.debug(f"PID:{os.getpid()} is executing the application "
-                            f"<{application}>, PID={self.__popen_process.pid}")
+        self.__logger.info(f'<{self.__actions_id}> starts execution')
+        self.__logger.debug(f"PID:{os.getpid()} is executing the action "
+                            f"<{self.__actions_id}>, "
+                            f"PID={self.__popen_process.pid}")
         return Response.OK
 
     def __stop_preemptory(self):
@@ -230,6 +238,21 @@ class ApplicationManager(multiprocessing.Process):
                                f" exit_status={exit_status}")
             return Response.OK
 
+    def __non_block_read(self, std_stream):
+        '''
+        helper function for reading from output/error stream of the process
+        launched.
+        '''
+        fd = std_stream.fileno()
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        try:
+            return std_stream.read()
+        except Exception:
+            self.__logger.exception(
+                f'excpetion while reading from {std_stream}')
+            return ''
+
     def __read_popen_pipes(self, application):
         '''
         helper function to read the outputs from the application.
@@ -251,18 +274,23 @@ class ApplicationManager(multiprocessing.Process):
         # read until the process is running
         while exit_status is None:
             try:
-                self.__logger.debug(f'<{application}> is running.')
-                exit_status = self.__popen_process.poll()
-                stdout_line = self.__popen_process.stdout.readline()
-                stderr_line = self.__popen_process.stderr.readline()
-
+                # read from the application output stream
+                stdout_line = self.__non_block_read(self.__popen_process.stdout)
                 # log the output received from the application
                 if stdout_line:
-                    self.__logger.info(f"{application}: {stdout_line.strip()}")
+                    self.__logger.info(
+                                f"action <{self.__actions_id}>: "
+                                f"{stdout_line.strip().decode('utf-8')}")
+                # read from the application error stream
+                stderr_line = self.__non_block_read(self.__popen_process.stderr)
                 # log the error reported by the application
                 if stderr_line:
-                    self.__logger.error(f"{application}: {stderr_line.strip()}")
+                    self.__logger.error(
+                                f"{application}: "
+                                f"{stderr_line.strip().decode('utf-8')}")
 
+                # check if process is still running
+                exit_status = self.__popen_process.poll()
                 # Case, process is finished and there is nothing to read in the
                 # stdout and stderr streams.
                 if exit_status is not None and\
@@ -271,18 +299,20 @@ class ApplicationManager(multiprocessing.Process):
                     break
 
                 # Otherwise, wait a bit to let the process proceed the execution
-                time.sleep(0.01)
+                time.sleep(0.1)
                 # continue reading
                 continue
+
             # just in case if process hangs on reading
             except KeyboardInterrupt:
                 # log the exception with traceback
                 self.__logger.exception(f"KeyboardInterrupt caught by: "
-                                        f"<{application}>")
+                                        f"action <{self.__actions_id}>")
                 # terminate the application process preemptory
                 if self.__stop_preemptory() == Response.ERROR:
                     # Case, process could not be terminated
-                    self.__logger.error(f'could not terminate <{application}>')
+                    self.__logger.error(f'could not terminate the action '
+                                        f'<{self.__actions_id}>')
                 # terminate reading loop with ERROR
                 return Response.ERROR
 
@@ -359,13 +389,14 @@ class ApplicationManager(multiprocessing.Process):
         # 2. fetch the application to be executed
         application = self.__actions.get('action')
         # 3. fetch the application parameters
-        application_args = self.__actions.get('args')
+        # application_args = self.__actions.get('args')
+        # 4. fetch the action id
+        self.__actions_id = self.__actions.get('action-id')
         self.__logger.debug(
-            f'application:{application}, parameters:{application_args}')
+            f'application:{application}, action_id:{self.__actions_id}')
 
         # 4. Launch application
-        if self.__launch_application(application,
-                                     application_args) == Response.ERROR:
+        if self.__launch_application(application) == Response.ERROR:
             # Case a, could not launch the application
             try:
                 # raise runtime exception
@@ -405,10 +436,11 @@ class ApplicationManager(multiprocessing.Process):
             except RuntimeError:
                 # log the exception with traceback details
                 self.__logger.exception(
-                                f"application <{application}> execution went "
-                                f"wrong, finished with rc = {exit_code}")
+                                f"application <{application}> "
+                                f" action: <{self.__actions_id}> execution "
+                                f"went wrong, finished with rc = {exit_code}")
         # Case b, application executed successfully
-        self.__logger.info(f'Application <{application}> finished properly.')
+        self.__logger.info(f'Action <{self.__actions_id}> finished properly.')
 
         # 7. post processing
         if self.__post_processing(exit_code) == Response.ERROR:
