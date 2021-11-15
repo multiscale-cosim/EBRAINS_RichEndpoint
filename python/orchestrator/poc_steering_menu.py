@@ -19,7 +19,10 @@ from python.orchestrator.communicator_queue import CommunicatorQueue
 
 class POCSteeringMenu:
     '''demonstrates the POC of steering via CLI.'''
-    def __init__(self, log_settings, configurations_manager) -> None:
+    def __init__(self, log_settings,
+                 configurations_manager,
+                 orchestrator_in_queue,
+                 orchestrator_out_queue):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -30,6 +33,8 @@ class POCSteeringMenu:
         self.__steering_menu_handler = SteeringMenuCLIHandler()
         self.__communicator = CommunicatorQueue(log_settings,
                                                 configurations_manager)
+        self.__orchestrator_in_queue = orchestrator_in_queue
+        self.__orchestrator_out_queue = orchestrator_out_queue
         self.__logger.debug('initialized.')
 
     def __get_steering_menu_item(self, command):
@@ -52,14 +57,14 @@ class POCSteeringMenu:
         else:
             return None
 
-    def __get_responses(self, orchestrator_component_out_queue):
+    def __get_responses(self):
         '''
         helper function for receiving the responses from Orchestrator
         '''
         try:
             self.__logger.debug('getting response from Orchestrator.')
             return self.__communicator.receive(
-                    orchestrator_component_out_queue)
+                    self.__orchestrator_out_queue)
         except Exception:
             # Log the exception with Traceback details
             self.__logger.exception('exception while getting response.')
@@ -67,12 +72,44 @@ class POCSteeringMenu:
 
     def __validate_steering_command(self, command):
         '''validates the steering command before sending to Orchestrator.'''
+        self.__logger.debug(
+            f'legitimate choice: {self.__current_legitimate_choice}'
+            f' current user choice:{command}')
         return (command == self.__current_legitimate_choice
                 or command == SteeringCommands.END)
 
-    def start_steering(self,
-                              orchestrator_component_in_queue,
-                              orchestrator_component_out_queue):
+    def send_steering_command_to_orchestrator(self, command):
+        '''helper function to send the steering command to Orchestrator.'''
+        self.__logger.debug(f'sending: {command} to Orchestrator.')
+        self.__orchestrator_in_queue.put(command)
+
+    def __execute_if_validated(self, user_choice):
+        '''
+        helper function to execute the steering commands after validation.
+
+        NOTE this is a client side validation, so nothing to do with the
+        state machine valid states and rules.
+        '''
+        # 1. check if the user chouice is a not valid menu choice
+        # e.g. it does not exist in steering menu
+        if not self.__validate_steering_command(user_choice):
+            # Case a. user choice is not a valid choice
+            return Response.ERROR
+
+        # Case b. user choice is a valid choice
+        # 2. send the steering command to Orchestrator
+        self.send_steering_command_to_orchestrator(user_choice)
+
+        # 3. keep track of steering commands
+        self.__steering_commands_history.append(
+            self.__get_steering_menu_item(user_choice))
+
+        # 4. get response from Orchestrator
+        self.__logger.debug(f'response from Orchestrator: '
+                            f'{self.__get_responses()}')
+        return Response.OK
+    
+    def start_steering(self):
         '''
         starts the steering menu handler to execute the user choice
         steering command.
@@ -86,38 +123,53 @@ class POCSteeringMenu:
         ------
         response code as int
         '''
-        user_choice = 0
+        # needed to check later if user enters a valid menu choice
         self.__current_legitimate_choice = 1
+
+        # Step 1. send INIT command to Orchestrator
+        # NOTE INIT is a system action and thus is done implicitly
+        self.send_steering_command_to_orchestrator(SteeringCommands.INIT)
+        # keep track of steering actions
+        self.__steering_commands_history.append('Init')
+        response = self.__get_responses()
+        self.__logger.debug(f'response from orchestrator: {response}')
+        if response == Response.ERROR:
+            # Case, INIT execution fails
+            try:
+                # raise run time error exception
+                raise RuntimeError
+            except RuntimeError:
+                # log the exception with traceback
+                self.__logger.exception('Could not execute INIT. Quiting!')
+            # terminate with error
+            return Response.ERROR
+
+        # Case, INIT is done successfully
+        user_choice = 0
+
+        # Step 2. start receiving steering from user
         while True:
+            # increment the index of currently valid menu choice
+            self.__current_legitimate_choice += 1
+            # display steering commands menu
             self.__steering_menu_handler.display_steering_menu()
             # get the user input
-            user_choice = self.__steering_menu_handler.parse_user_choice(
-                self.__steering_menu_handler.get_user_choice())
-            # keep track of steering commands
-            self.__steering_commands_history.append(
-                            self.__get_steering_menu_item(
-                                user_choice))
-            if not(user_choice == Response.ERROR or
-                    user_choice == SteeringCommands.EXIT):
-                # validate if user choice is a valid steering command
-                if self.__validate_steering_command(user_choice):
-                    # send the steering command to Orchestrator
-                    orchestrator_component_in_queue.put(user_choice)
-                    self.__logger.debug(
-                        f'response from orchestrator: '
-                        f'{self.__get_responses(orchestrator_component_out_queue)}')
-                    self.__current_legitimate_choice += 1
-                else:
-                    self.__logger.error(
-                        f'The legitimate choices are: '
-                        f'{self.__get_steering_menu_item(self.__current_legitimate_choice)}, '
-                        f'{self.__get_steering_menu_item(SteeringCommands.END)},'
-                        f' and EXIT.')
-            elif user_choice == Response.ERROR:
-                print("\nNot a valid choice. Enter again!")
-            elif user_choice == SteeringCommands.EXIT:
-                print(f'\nSteering command history: '
+            user_choice = self.__steering_menu_handler.get_user_choice()
+            user_choice += 1  # because INIT is already done as a system action
+            # parse user choice
+            user_choice =\
+                self.__steering_menu_handler.parse_user_choice(user_choice)
+            # terminate if user choice is 'Exit'
+            if user_choice == SteeringCommands.EXIT:
+                print(f'Steering command history: '
                       f'{self.__steering_commands_history}')
                 print("Exiting...")
                 break
+
+            # Otherwise, execute the steering command if it is a valid
+            # menu choice
+            if self.__execute_if_validated(user_choice) == Response.ERROR:
+                print('Not a valid choice. The valid choices are: [1-3]')
+
+        # user opted for 'EXIT', terminate the steering menu
         return Response.OK

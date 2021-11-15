@@ -107,7 +107,7 @@ class Launcher:
         # v. check if C&S is registered
         if self.__is_component_registered(
                     steering_service,
-                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_SERVICE) is None:
+                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
             self.__logger.exception('registry returns None for Command and Control \
                                     service.')
             # terminate Application Companions
@@ -150,8 +150,8 @@ class Launcher:
         # vii. launch the steering menu handler
         # NOTE: this is to demonstrate the POC of steering via CLI
         poc_steering_menu = POCSteeringMenu(self._log_settings,
-                                            self._configurations_manager)
-        poc_steering_menu.start_steering(
-                                orchestrator_component_in_queue,
-                                orchestrator_component_out_queue)
+                                            self._configurations_manager,
+                                            orchestrator_component_in_queue,
+                                            orchestrator_component_out_queue)
+        poc_steering_menu.start_steering()
         return Response.OK

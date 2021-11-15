@@ -46,7 +46,7 @@ class SERVICE_COMPONENT_CATEGORY(enum.IntEnum):
     """ Enum class for services (components) """
     APPLICATION_COMPANION = 0
     ORCHESTRATOR = 1
-    COMMAND_AND_SERVICE = 2
+    COMMAND_AND_CONTROL = 2
     STEERING_SERVICE = 3
     TRANSFORMER = 4
 
@@ -56,3 +56,10 @@ class SERVICE_COMPONENT_STATUS(enum.IntEnum):
     """ Enum class for services (components) status"""
     UP = 0
     DOWN = 1
+
+
+@enum.unique
+class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
+    """ Enum class for integrated applications (simulators)"""
+    PID = 0
+    LOCAL_MINIMUM_STEP_SIZE = 1

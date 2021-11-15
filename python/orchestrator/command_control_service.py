@@ -75,8 +75,8 @@ class CommandControlService(multiprocessing.Process):
         # register with registry
         if(self.__component_service_registry_manager.register(
                     os.getpid(),  # id
-                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_SERVICE,  # name
-                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_SERVICE,  # category
+                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # name
+                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # category
                     (self.__command_and_steering_service_in_queue,  # endpoint
                      self.__command_and_steering_service_out_queue),
                     SERVICE_COMPONENT_STATUS.UP,  # current status

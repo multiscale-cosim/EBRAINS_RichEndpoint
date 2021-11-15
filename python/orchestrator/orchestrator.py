@@ -14,7 +14,7 @@ import multiprocessing
 import os
 import signal
 from python.Application_Companion.signal_manager import SignalManager
-from python.Application_Companion.common_enums import EVENT
+from python.Application_Companion.common_enums import EVENT, INTEGRATED_SIMULATOR_APPLICATION
 from python.Application_Companion.common_enums import SteeringCommands
 from python.Application_Companion.common_enums import Response
 from python.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
@@ -121,7 +121,7 @@ class Orchestrator(multiprocessing.Process):
                                                         registered_component,
                                                         state)
 
-    def __find_minimum_step_size(self, step_sizes_with_pids):
+    def __find_global_minimum_step_size(self, step_sizes_with_pids):
         """
         helper function for finding the minimum step size.
 
@@ -136,7 +136,10 @@ class Orchestrator(multiprocessing.Process):
             the minimum step size of the list.
         """
         # extract all step sizes from dictionary
-        step_sizes = [sub['min_delay'] for sub in step_sizes_with_pids]
+        for dic in step_sizes_with_pids:
+            if dic == {}:
+                step_sizes_with_pids.remove(dic)
+        step_sizes = [sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name] for sub in step_sizes_with_pids]
         self.__logger.debug(f'step_sizes: {step_sizes}')
         return min(step_sizes)
 
@@ -184,8 +187,8 @@ class Orchestrator(multiprocessing.Process):
         if steering_command == SteeringCommands.INIT:
             self.__step_sizes = responses
             self.__logger.debug(f'step_sizes and PIDs: {self.__step_sizes}')
-            min_step_size = self.__find_minimum_step_size(self.__step_sizes)
-            self.__logger.info(f'minimum step_size: {min_step_size}')
+            min_step_size = self.__find_global_minimum_step_size(self.__step_sizes)
+            self.__logger.info(f'Global Minimum Step Size: {min_step_size}')
             return min_step_size
 
         # Case, response is e.g. RESPONSE.OK, etc.
@@ -341,7 +344,7 @@ class Orchestrator(multiprocessing.Process):
         # fetch C&C from regitstry
         self.__command_and_control_service =\
             self.__get_component_from_registry(
-                        SERVICE_COMPONENT_CATEGORY.COMMAND_AND_SERVICE)
+                        SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL)
         self.__logger.debug(f'command and steering service: '
                             f'{self.__command_and_control_service[0]}')
         # fetch C&C endpoint (in_queue and out_queue)

@@ -23,7 +23,8 @@ class SteeringMenuCLI:
         # setup a dictionary for menu handling as a key:value pair
         # i.e. SteeringCommands.Enum: str (to display)
         self.__steering_menu = {
-            SteeringCommands.INIT: "Setup synchronization",
+            # INIT is a system action and so is done implicitly
+            # SteeringCommands.INIT: "Setup synchronization",
             SteeringCommands.START: "Start",
             SteeringCommands.END: "End",
             SteeringCommands.EXIT: "Exit"

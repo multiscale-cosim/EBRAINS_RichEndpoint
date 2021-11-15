@@ -32,12 +32,14 @@ class SteeringMenuCLIHandler:
         print('\n'+'*' * 33, flush=True)
         print('*\t Steering Menu \t\t*')
         print('*' * 33)
+        index = 1
         for item in self.__steering_menu_cli.steering_menu_items:
-            print(f'{item}. {self.__steering_menu_cli.steering_menu[item]} ')
+            print(f'{index}. {self.__steering_menu_cli.steering_menu[item]} ')
+            index += 1
         print('\n')
 
     def get_user_choice(self):
-        choice = input("please enter the choice number [1-4]: ")
+        choice = input("please enter the choice number [1-3]: ")
         self.__current_choice = self.__convert_str_to_int(choice)
         return self.current_selection
 
