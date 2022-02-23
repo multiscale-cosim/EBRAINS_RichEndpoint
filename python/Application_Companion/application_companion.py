@@ -264,7 +264,7 @@ class ApplicationCompanion(multiprocessing.Process):
             self.__application_manager_out_queue,
             # flag to enable/disable resource usage monitoring
             # TODO set monitoring enable/disable settings from XML
-            enable_resource_usage_monitoring=True,
+            enable_resource_usage_monitoring=False,
         )
 
         # 3. start the application Manager
