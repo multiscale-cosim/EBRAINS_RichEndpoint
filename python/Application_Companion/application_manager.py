@@ -13,6 +13,7 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
+from sre_constants import ASSERT_NOT
 import subprocess
 import time
 import signal
@@ -174,12 +175,12 @@ class ApplicationManager(multiprocessing.Process):
                             f'<{self.__actions_id}>:'
                             f'{self.__popen_process.pid}')
 
-        # 3. start resource usage monitoring, if enabled
-        if self.__is_monitoring_enabled:
-            if self.__start_resource_usage_monitoring() == Response.ERROR:
-                # monitoring could not be started, a relevant exception is
-                # already logged with traceback
-                return Response.ERROR
+        # # 3. start resource usage monitoring, if enabled
+        # if self.__is_monitoring_enabled:
+        #     if self.__start_resource_usage_monitoring() == Response.ERROR:
+        #         # monitoring could not be started, a relevant exception is
+        #         # already logged with traceback
+        #         return Response.ERROR
 
         # Otherwise, everything goes right
         self.__logger.info(f'<{self.__actions_id}> starts execution')
@@ -188,7 +189,7 @@ class ApplicationManager(multiprocessing.Process):
                             f"PID={self.__popen_process.pid}")
         return Response.OK
 
-    def __start_resource_usage_monitoring(self):
+    def __start_resource_usage_monitoring(self, pid):
         '''starts monitoring of the resources usage by the application.'''
         # get affinity mask
         bind_with_cores = self.__affinity_manager.get_affinity(
@@ -197,7 +198,8 @@ class ApplicationManager(multiprocessing.Process):
         self.__resource_usage_monitor = ResourceUsageMonitor(
                                             self._log_settings,
                                             self._configurations_manager,
-                                            self.__popen_process.pid,
+                                            # self.__popen_process.pid,
+                                            pid,
                                             bind_with_cores)
         # start monitoring
         # Case a, monitoring could not be started
@@ -212,7 +214,8 @@ class ApplicationManager(multiprocessing.Process):
                             self.__logger,
                             f'Could not start monitoring for '
                             f'<{self.__actions_id}>: '
-                            f'{self.__popen_process.pid}')
+                            # f'{self.__popen_process.pid}')
+                            f'{pid}')
                 return Response.ERROR
 
         # Case b, monitoring is started                    
@@ -274,7 +277,7 @@ class ApplicationManager(multiprocessing.Process):
                 f'excpetion while reading from {std_stream}')
             return ''
     
-    def __get_local_minimum_step_size(self, lines):
+    def __convert_string_to_dictionary(self, lines):
         '''
         finds and extracts the local minimum step size information from
         std_out stream, and converts it to a dictionary.
@@ -337,8 +340,9 @@ class ApplicationManager(multiprocessing.Process):
                                 f"{decoded_lines}")
                     # get local minimum step size received from the application
                     # as a response to INIT command
+                
                     if SIMULATOR.LOCAL_MINIMUM_STEP_SIZE.name in decoded_lines:
-                        if self.__get_local_minimum_step_size(decoded_lines) ==\
+                        if self.__convert_string_to_dictionary(decoded_lines) ==\
                             Response.ERROR:
                             # Case a. Local minimum stepsize could not be
                             # determined, terminiate the execution with error
@@ -370,7 +374,7 @@ class ApplicationManager(multiprocessing.Process):
                     break
 
                 # Otherwise, wait a bit to let the process proceed the execution
-                time.sleep(0.1)
+                time.sleep(1)
                 # continue reading
                 continue
 
@@ -521,25 +525,37 @@ class ApplicationManager(multiprocessing.Process):
         # NOTE local minimum stepsize is sent by the simulators only.
         # Therefore, filter InterscaleHub when receiveing output via (stdin)
         # PIPE. Otherwise, it would hang on reading from PIPE.
-        if self.__actions_id != 'action_004':  # TODO hardcoded action id
-            if self.__read_popen_pipes(self.__application) == Response.ERROR:
-            # Case a, could not read the outputs
-                try:
-                    # raise runtime exception
-                    raise(RuntimeError)
-                except RuntimeError:
-                    # log the exception with traceback details
-                    self.__logger.exception('error reading output')
-                # send error as response to Application Companion
-                self.__send_response_to_application_companion(Response.ERROR)
-                # terminate with error
-                return Response.ERROR
+        # if self.__actions_id == 'action_004' or self.__actions_id == 'action_010':  # TODO hardcoded action id
+        if self.__read_popen_pipes(self.__application) == Response.ERROR:     
+        # Case a, could not read the outputs
+            try:
+                # raise runtime exception
+                raise(RuntimeError)
+            except RuntimeError:
+                # log the exception with traceback details
+                self.__logger.exception('error reading output')
+            # send error as response to Application Companion
+            self.__send_response_to_application_companion(Response.ERROR)
+            # terminate with error
+            return Response.ERROR
 
             # Case b, outputs are read successfully
-            self.__logger.debug('outputs are read.')
+        self.__logger.debug('outputs are read.')
+
+        # xxx start resource usage monitoring of the application
+        # 3. start resource usage monitoring, if enabled
+        if self.__is_monitoring_enabled:
+            # pid = self.__local_minimum_step_size[SIMULATOR.PID.name]
+            pid = self.__local_minimum_step_size.get("PID")
+            self.__logger.info(f"starting monitroing for {pid}")
+            if self.__start_resource_usage_monitoring(pid) == Response.ERROR:
+                # monitoring could not be started, a relevant exception is
+                # already logged with traceback
+                return Response.ERROR
 
         # 3. send local minimum step size as a response to Application
         # Companion
+        self.__logger.info(f'outputs are read from {self.__actions_id}: {self.__local_minimum_step_size}')
         self.__send_response_to_application_companion(
             self.__local_minimum_step_size)
         return Response.OK
@@ -652,7 +668,7 @@ class ApplicationManager(multiprocessing.Process):
 
             # 3(a). END coomand is already executed, finish execution as normal
             if current_steering_command == SteeringCommands.END:
-                self.__logger.info("Concluding execution.")
+                self.__logger.debug("Concluding execution.")
                 # finish execution as normal
                 break
 

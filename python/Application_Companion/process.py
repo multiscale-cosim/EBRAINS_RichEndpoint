@@ -15,6 +15,7 @@ import os
 from python.Application_Companion.cpu_usage import CPUUsage
 from python.Application_Companion.memory_usage import MemoryUsage
 from python.Application_Companion.resource_usage_summary import ResourceUsageSummary
+from python.Application_Companion.common_enums import Response
 
 
 class Process:
@@ -98,14 +99,25 @@ class Process:
         return self.__parse(self.__read(proc_stat_file))
 
     def __read(self, proc_stat_file):
-        with open(proc_stat_file) as stat_file:
-            return next(stat_file)
+        try:
+            with open(proc_stat_file) as stat_file:
+                return next(stat_file)
+        except OSError as e:
+            # An exception is raised while attempting to open the file because
+            # e.g. the process is already finished therefore the /proc/<pid>/stat file
+            # does not exist anymore
+            self.__logger.exception(f"{type(e)}: {e}")
+            return Response.ERROR_READING_FILE
 
     def __parse(self, stat_line):
-        self.__logger.debug(f'stat_line: {stat_line}')
-        proc_pid_stats = stat_line.split(' ')
-        process_name = proc_pid_stats[1].strip('()')  # remove sorrounding parentehses
-        process_starting_time = int(proc_pid_stats[21])
-        self.__logger.debug(f"process_name:{process_name}, "
-                            f"fprocess start time: {process_starting_time}")
+        process_name = None
+        process_starting_time = None
+    
+        if stat_line != Response.ERROR_READING_FILE:
+            self.__logger.debug(f'stat_line: {stat_line}')
+            proc_pid_stats = stat_line.split(' ')
+            process_name = proc_pid_stats[1].strip('()')  # remove sorrounding parentehses
+            process_starting_time = int(proc_pid_stats[21])
+            self.__logger.debug(f"process_name:{process_name}, "
+                                f"fprocess start time: {process_starting_time}")
         return (process_name, process_starting_time)

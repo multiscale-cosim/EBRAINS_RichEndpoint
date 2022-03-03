@@ -11,8 +11,11 @@
 # Laboratory: Simulation Laboratory Neuroscience
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
+from pickle import FALSE
 import threading
 import time
+import os
+import errno
 from python.Application_Companion.process import Process
 from python.Application_Companion.underlying_platform import Platform
 from python.Application_Companion.common_enums import Response
@@ -86,12 +89,41 @@ class ResourceUsageMonitor:
             'Affinity mask': self.__bind_with_cores,
             'Execution time [seconds]': self.execution_time,
             'Process Exit status': process_exit_status,
-            'CPU usage [% average]': self.__process.cpu_usage_stats,
-            'Memory usage [MiB]': self.__process.memory_usage_stats,
+            'CPU usage [% average] per second': self.__process.cpu_usage_stats,
+            'Memory usage [MiB] per second': self.__process.memory_usage_stats,
             'Underlying Platform Basic Details': self.__platform.basic_info,
             'CPU detailed information': self.__platform.detailed_CPUs_info
             }
 
+    def __check_if_pid_exists(self):
+            """Checks whether <pid> exists in the current process table.
+            NOTE the current solution is for UNIX only.
+            """
+            if self.process_id < 0:
+                return False
+            if self.process_id == 0:
+                # According to "man 2 kill" PID 0 refers to every process
+                # in the process group of the calling process.
+                # On certain systems 0 is a valid PID but we have no way
+                # to know that in a portable fashion.
+                raise ValueError('invalid PID 0')
+            try:
+                os.kill(self.process_id, 0)
+            except OSError as e:
+                if e.errno == errno.ESRCH:
+                    # ESRCH == No such process
+                    return False
+                elif e.errno == errno.EPERM:
+                    # EPERM clearly means there's a process to deny access to
+                    return True
+                else:
+                    # According to "man 2 kill" possible error values are
+                    # (EINVAL, EPERM, ESRCH)
+                    raise
+            else:
+                return True
+    
+    
     def get_cpu_stats(self):
         '''
         Method for CPU usage monitoring thread
@@ -99,13 +131,37 @@ class ResourceUsageMonitor:
         self.__logger.info(f'starts CPU monitoring for pid:{self.process_id}')
         # keep monitoring until the process finishes
         while self.keep_monitoring:  # flag is set by Application Manager
+            # check of process is not finished yet
+            if self.__check_if_pid_exists() == False:
+                # Case a, process is alreadt finished
+                self.__logger.info(f"process with pid: {self.process_id} is already finished")
+                # exit the monitoring loop
+                break
+            
+            # Case b, process is still running
+            # get CPU stats
             current_cpu_usage_stats, process_execution_time = \
-                self.__process.get_cpu_stats()
+                self.__process.get_cpu_stats()                
+            
+            # check if something went wrong while reading the stats
+            if current_cpu_usage_stats == Response.ERROR_READING_FILE or\
+                process_execution_time == Response.ERROR_READING_FILE:
+                # Case a, error reading the CPU stats
+                # NOTE a more relative exception is already logged with
+                # traceback details
+                self.__logger.error("Error reading cpu stats file")
+                # exit the monitoring loop
+                break
+                
+            # Case b, the stats are read successfully
             self.__process.cpu_usage_stats.append(current_cpu_usage_stats)
             time.sleep(self._poll_interval)
+
+
+        # proces is finished and so is the cpu usage monitoring
         self.__process.process_execution_time = process_execution_time
         self.__cpu_usage_monitoring_done = True
-        self.__logger.debug(f"done with CPU monitoring for pid: "
+        self.__logger.info(f"done with CPU monitoring for pid: "
                             f"{self.process_id}")
 
     def get_memory_stats(self):
@@ -116,12 +172,30 @@ class ResourceUsageMonitor:
                            f"{self.process_id}")
         # keep monitoring until the process finishes
         while self.keep_monitoring:  # flag is set by Application Manager
+            # check of process is not finished yet
+            if self.__check_if_pid_exists() == False:
+                # Case a, process is alreadt finished
+                self.__logger.info(f"process with pid: {self.process_id} is already finished")
+                # exit the monitoring loop
+                break
+
+            # Case b, process is still running
+            # get memory stats
             current_memory_usage = self.__process.get_memory_stats()
+            # if current_cpu_usage_stats is negative then stop monitoring
+            if current_memory_usage == Response.ERROR_READING_FILE:
+                self.keep_monitoring = False
+                break
+
             self.__process.memory_usage_stats.append(current_memory_usage)
             time.sleep(self._poll_interval)
+    
+        # proces is finished and so is the memory usage monitoring
         self.__memory_usage_monitoring_done = True
-        self.__logger.debug(f"done with memory monitoring for pid: "
+        self.__logger.info(f"done with memory monitoring for pid: "
                             f"{self.process_id}")
+    
+            
 
     def get_resource_usage_stats(self, process_exit_status):
         # To get the complete usage details,

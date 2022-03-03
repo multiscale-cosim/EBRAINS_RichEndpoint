@@ -31,6 +31,7 @@ class Response(enum.IntEnum):
     # TODO: extend responses for different types of errors and for each module
     OK = 0
     ERROR = -100
+    ERROR_READING_FILE = -170
 
 
 @enum.unique

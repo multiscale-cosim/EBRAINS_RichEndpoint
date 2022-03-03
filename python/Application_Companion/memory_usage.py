@@ -13,6 +13,8 @@
 # ------------------------------------------------------------------------------
 import os
 
+from python.Application_Companion.common_enums import Response
+
 class MemoryUsage:
     '''
     Provides the memory usage stats for a specific process.
@@ -95,34 +97,47 @@ class MemoryUsage:
         return (map(str.strip, line.split(delimiter)))
 
     def __get_current_memory_usage(self, file):
-        with open(file, "r") as fp:
-            for line in self.__generate_line_that_contains(
-                                    self.__memory_metrics, fp):
-                # split into key, value
-                key, memory_kb = self.__split_values(line, ':')
-                # strip off "kB"
-                memory_in_KB, _ = self.__split_values(memory_kb, ' ')
-                try:
-                    # convert to MiB
-                    memory_in_MiB = float(memory_in_KB)/1024
-                    # save the memory usage in MiB
-                    self.__memory_usage.setdefault(key, []).append(
-                    memory_in_MiB)
-                except Exception:
-                    # if conversion fails for some reasons, then
-                    # log the exception with traceback
-                    self.__logger.exception('Could not covert memory in MiB.')
-                    # save the memory usage in KB
-                    self.__memory_usage.setdefault(key, []).append(
-                        memory_in_KB)
+        try:
+            with open(file, "r") as fp:
+                for line in self.__generate_line_that_contains(
+                                        self.__memory_metrics, fp):
+                    # split into key, value
+                    key, memory_kb = self.__split_values(line, ':')
+                    # strip off "kB"
+                    memory_in_KB, _ = self.__split_values(memory_kb, ' ')
+                    try:
+                        # convert to MiB
+                        memory_in_MiB = float(memory_in_KB)/1024
+                        # save the memory usage in MiB
+                        self.__memory_usage.setdefault(key, []).append(
+                        memory_in_MiB)
+                    except Exception:
+                        # if conversion fails for some reasons, then
+                        # log the exception with traceback
+                        self.__logger.exception('Could not covert memory in MiB.')
+                        # save the memory usage in KB
+                        self.__memory_usage.setdefault(key, []).append(
+                            memory_in_KB)
+                        return Response.OK
+        except OSError as e:
+            # An exception is raised while attempting to open the file because
+            # e.g. the process is already finished therefore the
+            # /proc/<pid>/smaps file does not exist anymore
+            self.__logger.exception(f"{type(e)}: {e}")
+            return Response.ERROR_READING_FILE
 
     def __sum_list_values(self, list_obj):
         return sum(list(map(float, list_obj)))
 
     def get_usage_stats(self):
-        # Case, file exists
-        # read memory file and fill the metrics
-        self.__get_current_memory_usage(self._path_to_read_stats)
+        # Check if '/proc/<pid>/smaps' file exists
+        if self.__get_current_memory_usage(self._path_to_read_stats) == Response.ERROR_READING_FILE:
+            # Case a, file does not exist
+            # return with error, an exception is already logged with traceback
+            return Response.ERROR_READING_FILE
+        
+        # Case b, file exists and the stats are read
+        # now fill the metrics
         memory_usage = {k: self.__sum_list_values(self.__memory_usage[k])
                         for k in self.__memory_usage if k in self.__memory_metrics
                         }

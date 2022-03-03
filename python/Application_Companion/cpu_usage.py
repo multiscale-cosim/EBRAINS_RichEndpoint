@@ -12,6 +12,7 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import os
+from python.Application_Companion.common_enums import Response
 
 
 class CPUUsage:
@@ -95,22 +96,33 @@ class CPUUsage:
         # wait until the process run time elapsed since process start time.
         while not process_execution_time:
             total_time_with_children, process_start_time = self.__get_times()
-            self.__logger.debug(
-                    f"total time with children: {total_time_with_children}, "
-                    f"process_start_time: {process_start_time}")
-            system_uptime, system_idle_process_time = self.__get_uptime()
-            self.__logger.debug(
-                    f"system_uptime: {system_uptime}, "
-                    f"system_idle_process_time: {system_idle_process_time}")
-            process_execution_time = self.__get_process_running_time(
-                    system_uptime, process_start_time)
-            self.__logger.debug(
-                    f'process_execution_time: {process_execution_time}')
-        average_cpu_usage = self.__get_current_cpu_usage(
-                    total_time_with_children,
-                    process_execution_time)
-        self.__logger.debug(f'average cpu usage: {average_cpu_usage}')
-        return (average_cpu_usage, process_execution_time)
+            
+            # Case a, something went wrong while reading the file
+            # NOTE more specific exception is already recirded with traceback
+            # where it is occured 
+            if total_time_with_children == Response.ERROR_READING_FILE or\
+                 process_start_time == Response.ERROR_READING_FILE:
+                
+                # send back the error as response
+                return (Response.ERROR_READING_FILE, Response.ERROR_READING_FILE)
+            
+            else:
+            # Case b, times are read from the /proc/<pid>/stat file
+                self.__logger.debug(
+                        f"total time with children: {total_time_with_children}, "
+                        f"process_start_time: {process_start_time}")
+                system_uptime, system_idle_process_time = self.__get_uptime()
+                self.__logger.debug(
+                        f"system_uptime: {system_uptime}, "
+                        f"system_idle_process_time: {system_idle_process_time}")
+                process_execution_time = self.__get_process_running_time(
+                        system_uptime, process_start_time)
+                self.__logger.debug(
+                        f'process_execution_time: {process_execution_time}')
+            average_cpu_usage = self.__get_current_cpu_usage(
+                        total_time_with_children, process_execution_time)
+            self.__logger.debug(f'average cpu usage: {average_cpu_usage}')
+            return (average_cpu_usage, process_execution_time)
 
     def __get_process_running_time(self, system_uptime, process_start_time):
         # process-running-time(seconds) = system-uptime(seconds) - (starttime / USER_HZ) [1]
@@ -129,34 +141,46 @@ class CPUUsage:
         return total_time_with_children, process_start_time
 
     def __read(self, _path_to_read_stats):
-        with open(_path_to_read_stats) as stat_file:
-            return next(stat_file)
+        try: 
+            with open(_path_to_read_stats) as stat_file:
+                return next(stat_file)
+        except OSError as e:
+            # An exception is raised while attempting to open the file because
+            # e.g. the process is already finished therefore the /proc/<pid>/stat file
+            # does not exist anymore
+            self.__logger.exception(f"{type(e)}: {e}")
+            return Response.ERROR_READING_FILE
 
     def __parse(self, stat_line):
-        self.__logger.debug(f'stat_line: {stat_line}')
-        proc_pid_stats = stat_line.split(' ')
-        if self.__process_name is None:
-            self.__process_name = proc_pid_stats[3]
-        # utime: time the process has been scheduled in user mode, measured in
-        # clock ticks (divide by sysconf(_SC_CLK_TCK).
-        utime = int(proc_pid_stats[13])
-        # stime: Amount of time that this process has been scheduled in kernel
-        # mode, measured in clock ticks (divide by sysconf(_SC_CLK_TCK).
-        stime = int(proc_pid_stats[14])
-        # cutime:Amount of time that this process's waited-for children have
-        # been scheduled in user mode, measured in clock ticks (divide by
-        # sysconf(_SC_CLK_TCK).
-        cutime = int(proc_pid_stats[15])
-        # cstime:Amount of time that this process's waited-for children have
-        # been scheduled in kernel mode, measured in clock ticks (divide by
-        # sysconf(_SC_CLK_TCK).
-        cstime = int(proc_pid_stats[16])
-        # NOTE: utime and cutime also include guest time, cguest_time, so that
-        # applications that are not aware of the guest time field do not lose
-        # that time from their calculations.
-        process_start_time = int(proc_pid_stats[21])
-        self.__logger.debug(f"utime: {utime}, stime: {stime}, "
-                            f"cutime: {cutime}, cstime : {cstime}")
-        self.__logger.debug(f'process start time: {process_start_time}')
-        total_time_with_children = float(utime + stime + cutime + cstime)
+        
+        if stat_line is Response.ERROR_READING_FILE:
+            return (Response.ERROR_READING_FILE, Response.ERROR_READING_FILE)
+        else:
+        
+            self.__logger.debug(f'stat_line: {stat_line}')
+            proc_pid_stats = stat_line.split(' ')
+            if self.__process_name is None:
+                self.__process_name = proc_pid_stats[3]
+            # utime: time the process has been scheduled in user mode, measured in
+            # clock ticks (divide by sysconf(_SC_CLK_TCK).
+            utime = int(proc_pid_stats[13])
+            # stime: Amount of time that this process has been scheduled in kernel
+            # mode, measured in clock ticks (divide by sysconf(_SC_CLK_TCK).
+            stime = int(proc_pid_stats[14])
+            # cutime:Amount of time that this process's waited-for children have
+            # been scheduled in user mode, measured in clock ticks (divide by
+            # sysconf(_SC_CLK_TCK).
+            cutime = int(proc_pid_stats[15])
+            # cstime:Amount of time that this process's waited-for children have
+            # been scheduled in kernel mode, measured in clock ticks (divide by
+            # sysconf(_SC_CLK_TCK).
+            cstime = int(proc_pid_stats[16])
+            # NOTE: utime and cutime also include guest time, cguest_time, so that
+            # applications that are not aware of the guest time field do not lose
+            # that time from their calculations.
+            process_start_time = int(proc_pid_stats[21])
+            self.__logger.debug(f"utime: {utime}, stime: {stime}, "
+                                f"cutime: {cutime}, cstime : {cstime}")
+            self.__logger.debug(f'process start time: {process_start_time}')
+            total_time_with_children = float(utime + stime + cutime + cstime)
         return (total_time_with_children, process_start_time)
