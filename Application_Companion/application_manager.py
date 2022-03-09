@@ -13,21 +13,21 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
-from sre_constants import ASSERT_NOT
 import subprocess
 import time
 import signal
 import fcntl
 import ast
-from python.Application_Companion.signal_manager import SignalManager
-from default_directories_enum import DefaultDirectories
-from python.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
-from python.Application_Companion.common_enums import INTEGRATED_SIMULATOR_APPLICATION as SIMULATOR
-from python.Application_Companion.common_enums import Response
-from python.orchestrator.communicator_queue import CommunicatorQueue
-from python.Application_Companion.common_enums import SteeringCommands
-from python.Application_Companion.db_manager_file import DBManagerFile
-from python.Application_Companion.affinity_manager import AffinityManager
+
+from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
+from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.default_directories_enum import DefaultDirectories
+from EBRAINS_RichEndpoint.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_SIMULATOR_APPLICATION as SIMULATOR
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.Application_Companion.db_manager_file import DBManagerFile
+from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
 
 
 class ApplicationManager(multiprocessing.Process):

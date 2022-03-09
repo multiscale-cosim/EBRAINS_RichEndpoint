@@ -11,10 +11,10 @@
 #       Team: Multi-scale Simulation and Design
 #
 # ------------------------------------------------------------------------------
-from python.Application_Companion.common_enums import Response
-from python.Application_Companion.common_enums import SteeringCommands
-from python.orchestrator.steering_menu_handler import SteeringMenuCLIHandler
-from python.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.steering.steering_menu_handler import SteeringMenuCLIHandler
+from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 
 
 class POCSteeringMenu:

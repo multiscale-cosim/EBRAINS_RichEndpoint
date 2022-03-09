@@ -12,14 +12,15 @@
 #
 # ------------------------------------------------------------------------------S
 import time
-from python.Application_Companion.common_enums import Response, SteeringCommands
-from python.Application_Companion.application_companion import ApplicationCompanion
-from python.orchestrator.routing_manager import RoutingManager
-from python.orchestrator.command_control_service import CommandControlService
-from python.orchestrator.orchestrator import Orchestrator
-from python.Application_Companion.common_enums import Response
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from python.orchestrator.poc_steering_menu import POCSteeringMenu
+
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.application_companion import ApplicationCompanion
+from EBRAINS_RichEndpoint.orchestrator.routing_manager import RoutingManager
+from EBRAINS_RichEndpoint.orchestrator.command_control_service import CommandControlService
+from EBRAINS_RichEndpoint.orchestrator.orchestrator import Orchestrator
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.steering.poc_steering_menu import POCSteeringMenu
 
 
 class Launcher:

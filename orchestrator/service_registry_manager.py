@@ -11,9 +11,9 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
-from python.orchestrator.service_component import ServiceComponent
-from python.orchestrator.service_registry import ServiceRegistry
-from python.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.orchestrator.service_component import ServiceComponent
+from EBRAINS_RichEndpoint.orchestrator.service_registry import ServiceRegistry
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class ServiceRegistryManager:

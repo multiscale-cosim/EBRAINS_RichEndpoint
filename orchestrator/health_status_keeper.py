@@ -11,10 +11,10 @@
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from datetime import datetime
-from python.orchestrator.health_status import HealthStatus
-from python.orchestrator.health_status_monitor import HealthStatusMonitor
-from python.Application_Companion.common_enums import Response
-from python.orchestrator.state_enums import STATES
+from EBRAINS_RichEndpoint.orchestrator.health_status import HealthStatus
+from EBRAINS_RichEndpoint.orchestrator.health_status_monitor import HealthStatusMonitor
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 
 
 class HealthStatusKeeper:

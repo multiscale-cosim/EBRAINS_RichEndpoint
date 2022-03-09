@@ -13,7 +13,8 @@
 import threading
 import time
 import signal
-from python.Application_Companion.common_enums import Response
+
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class SignalMonitor:

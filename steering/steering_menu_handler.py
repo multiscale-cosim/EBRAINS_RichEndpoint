@@ -11,8 +11,8 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
-from python.orchestrator.steering_menu_cli import SteeringMenuCLI
-from python.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.steering.steering_menu_cli import SteeringMenuCLI
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class SteeringMenuCLIHandler:

@@ -13,10 +13,11 @@
 # ------------------------------------------------------------------------------
 import queue
 import signal
-from python.Application_Companion.signal_manager import SignalManager
-from python.Application_Companion.common_enums import EVENT
-from python.Application_Companion.common_enums import Response
-from python.orchestrator.communicator_base import CommunicatorBaseClass
+
+from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.orchestrator.communicator_base import CommunicatorBaseClass
 
 
 class CommunicatorQueue(CommunicatorBaseClass):

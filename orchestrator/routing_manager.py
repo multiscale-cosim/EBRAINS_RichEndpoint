@@ -12,7 +12,8 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from multiprocessing.managers import BaseManager
-from python.orchestrator.service_registry_manager import ServiceRegistryManager
+
+from EBRAINS_RichEndpoint.orchestrator.service_registry_manager import ServiceRegistryManager
 
 
 # crete a custom (server process) manager for manipulating the registry

@@ -13,9 +13,10 @@
 # ------------------------------------------------------------------------------
 from dataclasses import dataclass
 from typing import Any
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
-from python.orchestrator.state_enums import STATES
+
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 
 
 @dataclass  # dataclass to avoid the boilerplate pain

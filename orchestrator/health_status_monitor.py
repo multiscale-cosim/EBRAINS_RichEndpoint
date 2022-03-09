@@ -14,8 +14,8 @@
 import threading
 import time
 import signal
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
-from python.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class HealthStatusMonitor:

@@ -13,16 +13,16 @@
 import multiprocessing
 import os
 import signal
-from python.Application_Companion.signal_manager import SignalManager
-from python.Application_Companion.common_enums import EVENT, INTEGRATED_SIMULATOR_APPLICATION
-from python.Application_Companion.common_enums import SteeringCommands
-from python.Application_Companion.common_enums import Response
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from python.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
-from python.orchestrator.state_enums import STATES
-from python.orchestrator.communicator_queue import CommunicatorQueue
-from python.orchestrator.health_status_keeper import HealthStatusKeeper
-from python.orchestrator.signal_monitor import SignalMonitor
+from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTEGRATED_SIMULATOR_APPLICATION
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
+from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.orchestrator.health_status_keeper import HealthStatusKeeper
+from EBRAINS_RichEndpoint.orchestrator.signal_monitor import SignalMonitor
 
 
 class Orchestrator(multiprocessing.Process):

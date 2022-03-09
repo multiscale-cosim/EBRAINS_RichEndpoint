@@ -11,14 +11,14 @@
 # Laboratory: Simulation Laboratory Neuroscience
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
-from pickle import FALSE
 import threading
 import time
 import os
 import errno
-from python.Application_Companion.process import Process
-from python.Application_Companion.underlying_platform import Platform
-from python.Application_Companion.common_enums import Response
+
+from EBRAINS_RichEndpoint.Application_Companion.process import Process
+from EBRAINS_RichEndpoint.Application_Companion.underlying_platform import Platform
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class ResourceUsageMonitor:

@@ -12,8 +12,9 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import argument_parser
-from python.configuration_manager.configurations_manager import ConfigurationsManager
-from python.launcher import Launcher
+
+from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
+from EBRAINS_RichEndpoint.launcher import Launcher
 
 
 #############################################################################

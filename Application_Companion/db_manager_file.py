@@ -12,8 +12,8 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import json
-from python.Application_Companion.db_manager_base import DBManagerBaseClass
-from python.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.db_manager_base import DBManagerBaseClass
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class DBManagerFile(DBManagerBaseClass):

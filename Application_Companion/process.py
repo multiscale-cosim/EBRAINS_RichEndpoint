@@ -12,10 +12,11 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import os
-from python.Application_Companion.cpu_usage import CPUUsage
-from python.Application_Companion.memory_usage import MemoryUsage
-from python.Application_Companion.resource_usage_summary import ResourceUsageSummary
-from python.Application_Companion.common_enums import Response
+
+from EBRAINS_RichEndpoint.Application_Companion.cpu_usage import CPUUsage
+from EBRAINS_RichEndpoint.Application_Companion.memory_usage import MemoryUsage
+from EBRAINS_RichEndpoint.Application_Companion.resource_usage_summary import ResourceUsageSummary
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class Process:
