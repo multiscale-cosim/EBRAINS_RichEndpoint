@@ -17,19 +17,18 @@ from datetime import datetime
 from typing import Any
 
 
-@dataclass  # dataclass to avoid the boilerplate pain
+@dataclass(init=False)
 class HealthStatus:
     """
     Data class for global health and status.
     The attributes are not necessary to be initialized during instantiation.
     """
     # make uptime a private member so it cannot be altered later
-    __uptime: datetime = field(default=datetime.now(), init=False, repr=False)
-    current_global_state: Any = field(init=False, repr=False)
-    current_global_status: Any = field(init=False, repr=False)
-    last_updated: datetime = field(init=False, repr=False)
+    __uptime: datetime = field(default=datetime.now())
+    current_global_state: Any
+    current_global_status: Any
+    last_updated: datetime
 
     # make a read only public attribute to access the uptime
     @property
-    def uptime(self) -> datetime:
-        return self.__uptime
+    def uptime(self) -> datetime: return self.__uptime

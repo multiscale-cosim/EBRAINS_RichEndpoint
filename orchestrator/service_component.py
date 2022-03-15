@@ -19,7 +19,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMP
 from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 
 
-@dataclass  # dataclass to avoid the boilerplate pain
+@dataclass
 class ServiceComponent:
     """
     Data class for the service components to facilitate their discovery
@@ -41,20 +41,16 @@ class ServiceComponent:
 
     # make a read only public attribute to access the id
     @property
-    def id(self) -> Any:
-        return self.__id
+    def id(self): return self.__id
 
     # make a read only public attribute to access the name
     @property
-    def name(self) -> Any:
-        return self.__name
+    def name(self): return self.__name
 
     # make a read only public attribute to access the category
     @property
-    def category(self) -> Any:
-        return self.__category
+    def category(self): return self.__category
 
     # make a read only public attribute to access the endpoint
     @property
-    def endpoint(self) -> Any:
-        return self.__endpoint
+    def endpoint(self): return self.__endpoint
