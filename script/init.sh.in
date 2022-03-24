@@ -1,5 +1,0 @@
-#!/bin/bash -x
-# TODO: Hardcoded python path
-export PYTHONPATH=${CMAKE_INSTALL_PREFIX}/lib/python3.6/site-packages/:${CMAKE_INSTALL_PREFIX}/lib:$PYTHONPATH:
-
-export LD_LIBRARY_PATH=${CMAKE_INSTALL_PREFIX}/lib/cython_lib:$LD_LIBRARY_PATH
