@@ -14,6 +14,7 @@
 import multiprocessing
 import os
 
+from common.utils import proxy_manager_server_utils
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
@@ -27,8 +28,7 @@ class CommandControlService(multiprocessing.Process):
     It channels the command and steering between Orchestrator and
     Application Companions.
     """
-    def __init__(self, log_settings, configurations_manager,
-                 component_service_registry_manager) -> None:
+    def __init__(self, log_settings, configurations_manager):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -40,9 +40,28 @@ class CommandControlService(multiprocessing.Process):
             multiprocessing.Manager().Queue()   # for in-comming messages
         self.__command_and_steering_service_out_queue =\
             multiprocessing.Manager().Queue()   # for out-going messages
-        # proxy to registry service
+        
+        # get client to proxy manager server and connect with server
+        self._proxy_manager_client = proxy_manager_server_utils.connect(
+            proxy_manager_server_utils.IP,
+            proxy_manager_server_utils.PORT,
+            proxy_manager_server_utils.KEY,
+        )
+
+       # Case a: connection could ne be made with proxy manager server
+        if self._proxy_manager_client == Response.ERROR:
+            # raise an exception and terminate with error
+            proxy_manager_server_utils.terminate_with_error(
+                "Command&Control could not make connection with Proxy Manager Server!")
+
+        # Case b: connection is made with proxy manager server
+        # Now, get the proxy to registry manager
         self.__component_service_registry_manager =\
-            component_service_registry_manager
+            proxy_manager_server_utils.get_registry_proxy(
+            self._proxy_manager_client,
+            self._log_settings,
+            self._configurations_manager)
+
         # flag to indicate whether C&S service
         # is registered with registry service
         self.__is_registered = multiprocessing.Event()

@@ -16,7 +16,21 @@ from EBRAINS_RichEndpoint.orchestrator.service_registry import ServiceRegistry
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
-class ServiceRegistryManager:
+class MetaRegistryManager(type):
+    """This metaclass ensures there exists only one instance of
+    RegistryManager class. It prevents the side-effects such as
+    the creation of multiple copies of registry dataclass.
+    """
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            # Case: First time instantiation.
+            cls._instances[cls] = super(MetaRegistryManager,
+                                        cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class ServiceRegistryAdapter(metaclass=MetaRegistryManager):
     '''
     Manages the registry and discovery of components.
     Provides wrappers to manipulate the current status and active state
