@@ -29,7 +29,7 @@ Manager.register('ServiceRegistryManager', ServiceRegistryAdapter)
 class ProxyManagerServer:
     '''
         starts the Custom Manager Process to share the data between the
-        process over the network.
+        processes over the network.
     '''
     def __init__(self, ip, port, authkey):
         self.__ip = ip

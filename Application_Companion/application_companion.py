@@ -25,6 +25,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMP
 from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
 class ApplicationCompanion(multiprocessing.Process):
@@ -59,26 +60,23 @@ class ApplicationCompanion(multiprocessing.Process):
         # actions (applications) to be launched
         self.__actions = actions
         
-        # get client to proxy manager server and connect with server
-        self._proxy_manager_client = proxy_manager_server_utils.connect(
+         # get client to Proxy Manager Server
+        self._proxy_manager_client =  ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        self._proxy_manager_client.connect(
             proxy_manager_server_utils.IP,
             proxy_manager_server_utils.PORT,
             proxy_manager_server_utils.KEY,
         )
 
-        # Case a: connection could ne be made with proxy manager server
-        if self._proxy_manager_client == Response.ERROR:
-            # raise an exception and terminate with error
-            proxy_manager_server_utils.terminate_with_error(
-                "Application Companion could not make connection with Proxy Manager Server!")
-
-        # Case b: connection is made with proxy manager server
         # Now, get the proxy to registry manager
         self.__component_service_registry_manager =\
-            proxy_manager_server_utils.get_registry_proxy(
-            self._proxy_manager_client,
-            self._log_settings,
-            self._configurations_manager)
+             self._proxy_manager_client.get_registry_proxy()
             
         self.__is_registered = multiprocessing.Event()
         # initialize AffinityManager for handling affinity settings
