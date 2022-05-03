@@ -13,34 +13,61 @@
 # ------------------------------------------------------------------------------S
 import time
 
+from common.utils import proxy_manager_server_utils
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.application_companion import ApplicationCompanion
-from EBRAINS_RichEndpoint.orchestrator.routing_manager import RoutingManager
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_server import ProxyManagerServer
 from EBRAINS_RichEndpoint.orchestrator.command_control_service import CommandControlService
 from EBRAINS_RichEndpoint.orchestrator.orchestrator import Orchestrator
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.steering.poc_steering_menu import POCSteeringMenu
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
 class Launcher:
     '''launches the all the necessary components to execute the workflow.'''
 
-    def __init__(self, log_settings, configurations_manager) -> None:
+    def __init__(self, log_settings, configurations_manager):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        # initialize routing manager for registry and discovery
-        self.__routing_manager = RoutingManager.manager()
+        
+        # initialize Proxy Manager Server process
+        self.__proxy_manager_server = ProxyManagerServer(
+            proxy_manager_server_utils.IP,
+            proxy_manager_server_utils.PORT,
+            proxy_manager_server_utils.KEY)
+
+        # start the Proxy Manager Server to listen and accept the connection requests
+        if self.__proxy_manager_server.start() == Response.ERROR:
+            # Case, proxy manager could not be started
+            # raise an exception and terminate with error
+            proxy_manager_server_utils.terminate_with_error("Launcher could not start Proxy Manager Server!")
+
+
+        # get client to Proxy Manager Server
+        self._proxy_manager_client =  ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        self._proxy_manager_client.connect(
+            proxy_manager_server_utils.IP,
+            proxy_manager_server_utils.PORT,
+            proxy_manager_server_utils.KEY,
+        )
+
+        # Now, get the proxy to registry manager
         self.__component_service_registry_manager =\
-            self.__routing_manager.get_registry_manager(
-                                            self._log_settings,
-                                            self._configurations_manager)
+             self._proxy_manager_client.get_registry_proxy()
 
         self.__logger.debug("initialized.")
-
+    
     def __is_component_registered(
                 self, componenet_service,
                 component_service_name,
@@ -82,30 +109,39 @@ class Launcher:
         launches the necessary components (Application Companions and
         Orchestrator) as per actions.
         '''
+        # 1. append proxy to service registry to action arg list
+        # for action in actions:
+        #     try:
+        #         import base64
+        #         import pickle
+        #         action['action'].append(base64.b64encode(pickle.dumps(self.__component_service_registry_manager)))
+        #     except KeyError:
+        #         self.__logger.error(f"No action Popen arg are found"
+        #                             f"<{action['action_xml_id']}>")
+        
+        # 2. initialize Application Comanions
         application_companions = []
-        # i. initialize Application Comanions
         for action in actions:
             application_companions.append(ApplicationCompanion(
                                     self._log_settings,
                                     self._configurations_manager,
-                                    action,
-                                    self.__component_service_registry_manager))
-        # ii. launch the application companions
+                                    action))
+        # 3. launch the application companions
         for application_companion in application_companions:
             self.__logger.info('setting up Application Companion.')
             application_companion.start()
         # allow application companions to register with registry
         time.sleep(2)  # TODO: set as run-time network delay
 
-        # iii. initialize steering service
+        # 4. initialize steering service
         self.__logger.info('setting up Command and Control service.')
         steering_service = CommandControlService(
                                     self._log_settings,
-                                    self._configurations_manager,
-                                    self.__component_service_registry_manager)
-        # iv. launch C&S service
+                                    self._configurations_manager)
+        # 5. launch C&S service
         steering_service.start()
-        # v. check if C&S is registered
+        
+        # 6. check if C&S is registered
         if self.__is_component_registered(
                     steering_service,
                     SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
@@ -121,12 +157,12 @@ class Launcher:
                 self.__logger.exception('got the exception')
             return Response.ERROR
 
-        # v. initialize orchestrator
+        # 7. initialize orchestrator
         self.__logger.info('Setting up Orchestrator.')
         orchestrator = Orchestrator(self._log_settings,
-                                    self._configurations_manager,
-                                    self.__component_service_registry_manager)
-        # vi. launch orchestrator
+                                    self._configurations_manager)
+        
+        # 8. launch orchestrator
         orchestrator.start()
         orchestrator_component = self.__is_component_registered(
                                     orchestrator,
@@ -148,7 +184,7 @@ class Launcher:
         orchestrator_component_in_queue,  orchestrator_component_out_queue =\
             orchestrator_component[0].endpoint
 
-        # vii. launch the steering menu handler
+        # 9. launch the steering menu handler
         # NOTE: this is to demonstrate the POC of steering via CLI
         poc_steering_menu = POCSteeringMenu(self._log_settings,
                                             self._configurations_manager,

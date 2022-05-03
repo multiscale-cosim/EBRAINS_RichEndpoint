@@ -15,6 +15,7 @@ import multiprocessing
 import os
 import signal
 
+from common.utils import proxy_manager_server_utils
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
@@ -24,6 +25,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMP
 from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
 class ApplicationCompanion(multiprocessing.Process):
@@ -36,8 +38,7 @@ class ApplicationCompanion(multiprocessing.Process):
         self,
         log_settings,
         configurations_manager,
-        actions,
-        component_service_registry_manager,
+        actions
     ):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
@@ -58,8 +59,25 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__application_manager_out_queue = multiprocessing.Manager().Queue()
         # actions (applications) to be launched
         self.__actions = actions
-        # registry service manager
-        self.__component_service_registry_manager = component_service_registry_manager
+        
+         # get client to Proxy Manager Server
+        self._proxy_manager_client =  ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        self._proxy_manager_client.connect(
+            proxy_manager_server_utils.IP,
+            proxy_manager_server_utils.PORT,
+            proxy_manager_server_utils.KEY,
+        )
+
+        # Now, get the proxy to registry manager
+        self.__component_service_registry_manager =\
+             self._proxy_manager_client.get_registry_proxy()
+            
         self.__is_registered = multiprocessing.Event()
         # initialize AffinityManager for handling affinity settings
         self.__affinity_manager = AffinityManager(
@@ -105,7 +123,7 @@ class ApplicationCompanion(multiprocessing.Process):
                 ),
                 SERVICE_COMPONENT_STATUS.UP,  # current status
                 # current state
-                STATES.READY,
+                STATES.READY
             ) == Response.ERROR
         ):
             # Case, registration fails
@@ -287,6 +305,7 @@ class ApplicationCompanion(multiprocessing.Process):
     def __execute_start_command(self):
         """helper function to execute START steering command"""
         self.__logger.info("Executing START command!")
+
         # 1. update local state
         if self.__update_local_state(STATES.RUNNING) == Response.ERROR:
             # terminate loudly as state could not be updated

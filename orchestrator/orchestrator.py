@@ -13,6 +13,8 @@
 import multiprocessing
 import os
 import signal
+
+from common.utils import proxy_manager_server_utils
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTEGRATED_SIMULATOR_APPLICATION
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
@@ -23,11 +25,11 @@ from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.orchestrator.health_status_keeper import HealthStatusKeeper
 from EBRAINS_RichEndpoint.orchestrator.signal_monitor import SignalMonitor
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
 class Orchestrator(multiprocessing.Process):
-    def __init__(self, log_settings, configurations_manager,
-                 component_service_registry_manager):
+    def __init__(self, log_settings, configurations_manager):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -52,9 +54,25 @@ class Orchestrator(multiprocessing.Process):
             multiprocessing.Manager().Queue()  # for in-comming messages
         self.__orchestrator_out_queue =\
             multiprocessing.Manager().Queue()  # for out-going messages
-        # registry service manager
+ 
+      # get client to Proxy Manager Server
+        self._proxy_manager_client =  ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        self._proxy_manager_client.connect(
+            proxy_manager_server_utils.IP,
+            proxy_manager_server_utils.PORT,
+            proxy_manager_server_utils.KEY,
+        )
+
+        # Now, get the proxy to registry manager
         self.__component_service_registry_manager =\
-            component_service_registry_manager
+             self._proxy_manager_client.get_registry_proxy()
+
         # flag to indicate whether Orchestrator is registered with registry
         self.__is_registered = multiprocessing.Event()
         # instantiate global health and status manager object
