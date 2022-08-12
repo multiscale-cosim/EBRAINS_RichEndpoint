@@ -21,11 +21,12 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringComm
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
-from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
-from EBRAINS_RichEndpoint.orchestrator.health_status_keeper import HealthStatusKeeper
 from EBRAINS_RichEndpoint.orchestrator.signal_monitor import SignalMonitor
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
+from EBRAINS_RichEndpoint.orchestrator.health_status_monitor import HealthStatusMonitor
+from EBRAINS_RichEndpoint.registry_state_machine.health_status_keeper import HealthStatusKeeper
+from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 
 
 class Orchestrator(multiprocessing.Process):
@@ -71,20 +72,23 @@ class Orchestrator(multiprocessing.Process):
 
         # Now, get the proxy to registry manager
         self.__component_service_registry_manager =\
-             self._proxy_manager_client.get_registry_proxy()
+            self._proxy_manager_client.get_registry_proxy()
 
         # flag to indicate whether Orchestrator is registered with registry
         self.__is_registered = multiprocessing.Event()
-        # instantiate global health and status manager object
-        self.__health_status_keeper = HealthStatusKeeper(
-                                    self._log_settings,
-                                    self._configurations_manager,
-                                    self.__component_service_registry_manager)
+
         # initialize alarm signal monitor
         self.__alarm_signal_monitor = SignalMonitor(
                                         self._log_settings,
                                         self._configurations_manager,
                                         self.__alarm_event)
+
+        # instantiate the global health and status monitor
+        self.__global_health_monitor = HealthStatusMonitor(
+                                        self._log_settings,
+                                        self._configurations_manager,
+                                        self.__component_service_registry_manager)
+
         self.__step_sizes = None
         self.__responses_received = []
         self.__command_and_control_service = []
@@ -97,6 +101,15 @@ class Orchestrator(multiprocessing.Process):
     @property
     def is_registered_in_registry(self): return self.__is_registered
 
+    def __start_global_health_monitoring(self):
+        """start global health monitoring thread."""
+        self.__global_health_monitor.start_monitoring()
+
+    def __finalize_global_health_monitoring(self):
+        """concludes global health monitoring."""
+        self.__logger.info("concluding the health and status monitoring.")
+        self.__global_health_monitor.finalize_monitoring()
+    
     def __get_component_from_registry(self, target_components_category) -> list:
         """
         helper function for retreiving the proxy of registered components by
@@ -118,26 +131,25 @@ class Orchestrator(multiprocessing.Process):
             f'found components: {len(components)}')
         return components
 
-    def __update_local_state(self, registered_component, state):
+    def __update_local_state(self, input_command):
         """
         helper function for updating the local state.
 
-         Parameters
+        Parameters
         ----------
-        registered_component : ServiceComponent
-            component registered in registry.
-
-        state : STATES.Enum
-            the new state of the component.
+        
+        input_command: SteeringCommands.Enum
+            the command to transit from the current state to next legal state
 
         Returns
         ------
         response code: int
             response code indicating whether or not the state is updated.
         """
-        return self.__component_service_registry_manager.update_state(
-                                                        registered_component,
-                                                        state)
+        return self.__component_service_registry_manager.update_local_state(
+                                    self.__orchestrator_registered_component,
+                                    input_command)
+        
 
     def __find_global_minimum_step_size(self, step_sizes_with_pids):
         """
@@ -197,7 +209,7 @@ class Orchestrator(multiprocessing.Process):
             self.__send_terminate_command(EVENT.STATE_UPDATE_FATAL)
             # stop monitoring
             self.__logger.critical('finalizing monitoring.')
-            self.__health_status_keeper.finalize_monitoring()
+            self.__finalize_global_health_monitoring()
             # terminate processing with error
             return Response.ERROR
 
@@ -267,7 +279,19 @@ class Orchestrator(multiprocessing.Process):
                             f'{steering_command}')
         return Response.OK
 
-    def __execute_if_validated(self, steering_command, valid_state, new_state):
+    def current_global_state(self):
+        """Wrapper to get the current global state of the System."""
+        return self.__component_service_registry_manager.current_global_state()
+
+    def current_global_status(self):
+        """Wrapper tp get the current global status of the System."""
+        return self.__component_service_registry_manager.current_global_status()
+
+    def __update_global_state(self):
+        """Wrapper tp update the current global state of the System."""
+        return self.__component_service_registry_manager.update_global_state()
+    
+    def __execute_if_validated(self, steering_command, valid_state):
         '''
         Executes the steering command if the global state is valid.
         Updates the global state after successful execution of the command.
@@ -291,17 +315,25 @@ class Orchestrator(multiprocessing.Process):
             and the global state is transitioned
         '''
         # i. check if the global state is valid for steering_command execution
-        if self.__health_status_keeper.current_global_state() != valid_state:
+        if self.current_global_state() != valid_state:
             self.__logger.critical(
                 f'Global state must be {valid_state} for executing'
                 f'the steering command: {steering_command}')
             return Response.ERROR
 
         # ii. update local state
-        if self.__update_local_state(self.__orchestrator_registered_component,
-                                     new_state) == Response.ERROR:
+        state_before_local_state = self.__orchestrator_registered_component.current_state
+        self.__orchestrator_registered_component = self.__update_local_state(steering_command)
+        if self.__orchestrator_registered_component == Response.ERROR:
+            # local state could not be updated
+            # NOTE an exception with traceback has already been logged in
+            # callee function
             self.__logger.critical('Error updating the local state.')
             return Response.ERROR
+        state_after_local_state = self.__orchestrator_registered_component.current_state
+        self.__component_service_registry_manager.update_state_transition_history(
+            state_before_local_state.name, steering_command.name, state_after_local_state.name
+        )
 
         # iii. send steering command to Application Companions
         if self.__execute_steering_command(steering_command) == Response.ERROR:
@@ -309,8 +341,8 @@ class Orchestrator(multiprocessing.Process):
                                    f'{steering_command}')
             return Response.ERROR
 
-        # iv. update global state
-        if self.__health_status_keeper.update_global_state() == Response.ERROR:
+        # iv. update global state if it is not yet updated by global health monitor
+        if self.__update_global_state() == Response.ERROR:
             self.__logger.critical('Error updating the global state.')
             return Response.ERROR
 
@@ -342,7 +374,7 @@ class Orchestrator(multiprocessing.Process):
         # Case, registration is done
         # indicate a successful registration
         self.__is_registered.set()
-        # retreive registered component which is later needed to update states
+        # retrieve registered component which is later needed to update states
         self.__orchestrator_registered_component =\
             self.__component_service_registry_manager.find_by_id(os.getpid())
         self.__logger.debug(
@@ -358,6 +390,7 @@ class Orchestrator(multiprocessing.Process):
         """
         # register with registry
         if self.__register_with_registry() == Response.ERROR:
+            # terminate with ERROR
             return Response.ERROR
         # fetch C&C from regitstry
         self.__command_and_control_service =\
@@ -372,12 +405,15 @@ class Orchestrator(multiprocessing.Process):
         # initialize the Communicator object for communication via Queues
         self.__communicator = CommunicatorQueue(self._log_settings,
                                                 self._configurations_manager)
-        # update global state to READY assuming all components are already
-        # launched by the launcher successfully. The local states of all
-        # components are anyway validated during the update process.
-        self.__health_status_keeper.update_global_state()
+        # update global state to 'READY' assuming all components are already
+        # up and running with local state 'READY'. The assumption is anyway
+        # validated during the update process.
+        if self.__update_global_state() == Response.ERROR:
+            self.__logger.critical('Error updating the global state.')
+            return Response.ERROR
+
         # start monitoring threads
-        self.__health_status_keeper.start_monitoring()
+        self.__start_global_health_monitoring()
         self.__alarm_signal_monitor.start_monitoring()
         return Response.OK
 
@@ -391,27 +427,23 @@ class Orchestrator(multiprocessing.Process):
         # with error
         self.__send_terminate_command(EVENT.FATAL)
         # stop monitoring
-        self.__health_status_keeper.finalize_monitoring()
+        self.__global_health_monitor.finalize_monitoring()
         # terminate with error
         return Response.ERROR
 
     def __execute_init_command(self):
         # validate the local and global states and execute
         return self.__execute_if_validated(SteeringCommands.INIT,
-                                           STATES.READY,
-                                           STATES.SYNCHRONIZING)
+                                           STATES.READY)
 
     def __execute_start_command(self):
         # validate the local and global states and execute
         return self.__execute_if_validated(SteeringCommands.START,
-                                           STATES.SYNCHRONIZING,
-                                           STATES.RUNNING)
+                                           STATES.SYNCHRONIZING)
 
     def __execute_end_command(self):
         # validate the local and global states and execute
-        return self.__execute_if_validated(SteeringCommands.END,
-                                           STATES.RUNNING,
-                                           STATES.TERMINATED)
+        return self.__execute_if_validated(SteeringCommands.END, STATES.RUNNING)
 
     def __handle_fatal_event(self):
         self.__logger.critical('quitting forcefully!')
@@ -438,7 +470,7 @@ class Orchestrator(multiprocessing.Process):
         while True:
             self.__logger.debug(
                     f'current global state: '
-                    f'{self.__health_status_keeper.current_global_state()}')
+                    f'{self.__component_service_registry_manager.current_global_state()}')
             # fetch the steering command
             current_steering_command = self.__communicator.receive(
                                                 self.__orchestrator_in_queue)
@@ -462,6 +494,16 @@ class Orchestrator(multiprocessing.Process):
 
             # finish execution as normal after executing END command
             if current_steering_command == SteeringCommands.END:
+                # log the local state transition traceback
+                local_state_transition_history =\
+                    self.__component_service_registry_manager.get_local_state_transition_history()
+                self.__logger.info('Local state transition history: '
+                                   f'{local_state_transition_history}')
+                # log the global state_transition traceback
+                global_state_transition_history =\
+                    self.__component_service_registry_manager.get_global_state_transition_history()
+                self.__logger.info('Global state transition history: '
+                                   f'{global_state_transition_history}')
                 # finish execution as normal
                 self.__logger.info('Concluding orchestration.')
                 self.__orchestrator_out_queue.put(Response.OK)

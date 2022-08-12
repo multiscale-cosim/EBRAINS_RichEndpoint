@@ -60,7 +60,7 @@ class SignalMonitor:
             # check if alarm is triggered
             continue
 
-        # signal is raised and montitoring is stopped
+        # signal is raised and monitoring is stopped
         self.__logger.critical('stopped monitoring.')
 
     def start_monitoring(self):

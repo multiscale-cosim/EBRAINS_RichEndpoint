@@ -65,7 +65,10 @@ class ServiceRegistry:
         '''
         for component in self.__registry:
             if component.id == component_id:
+                # Case a: component is found
                 return component
+
+        # Case b: component is not found
         return None
 
     def find_by_name(self, component_name):
@@ -84,7 +87,10 @@ class ServiceRegistry:
         '''
         for component in self.__registry:
             if component.name == component_name:
+                # Case a: component is found
                 return component
+        
+        # Case b: component is not found
         return None
 
     def find_all(self):
@@ -119,5 +125,4 @@ class ServiceRegistry:
             if old_component.id == component.id:
                 self.__registry[index] = component
                 is_updated = True
-                return is_updated
         return is_updated

@@ -13,7 +13,7 @@
 # ------------------------------------------------------------------------------
 from multiprocessing.managers import BaseManager
 
-from EBRAINS_RichEndpoint.orchestrator.service_registry_adapter import ServiceRegistryAdapter
+from EBRAINS_RichEndpoint.registry_state_machine.health_registry_manager import HealthRegistryManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
@@ -22,8 +22,9 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 class Manager(BaseManager):
     pass
 
+
 # register method to get the proxy
-Manager.register('ServiceRegistryManager', ServiceRegistryAdapter)
+Manager.register('ServiceRegistryManager', HealthRegistryManager)
 
 
 class ProxyManagerServer:

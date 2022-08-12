@@ -14,11 +14,15 @@
 import threading
 import time
 import signal
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
 class HealthStatusMonitor:
+    """
+    1) Monitors the local states and status of each component.
+    2) Validates whether all components have same states and their status is UP.
+    3) Raises an alarm signal if the states are not the same. 
+    """
     def __init__(self, log_settings,
                  configurations_manager,
                  service_registry_manager,
@@ -40,63 +44,25 @@ class HealthStatusMonitor:
         self.__keep_monitoring = None
         self.__logger.debug("initialized.")
 
-    def __all_status_up(self, target_components):
-        """"
-        helper function to check the current local statuses of all components.
-        Returns boolean value indicating whether all current local
-        statuses are UP.
-        """
-        return all(component.current_status == SERVICE_COMPONENT_STATUS.UP
-                   for component in target_components)
-
-    def __all_have_same_state(self, target_components):
-        """"
-        helper function to check the current local states of all components.
-        Returns boolean value indicating whether all current local
-        states are same.
-        """
-        return all(
-            component.current_state == target_components[0].current_state
-            for component in target_components)
-
-    def validate_local_states(self):
-        '''
-        checks the current status and the current state of each component.
-        If all have the same current state and status as UP
-        then, it returns a tuple of proxies of all components
-        and the componenets which have states (e.g. Orchestrator,
-        Application Companions).
-        Otherwise, it returns a tuple of None.
-        '''
-        # fetch all components from registry
-        all_components = self.__service_registry_manager.find_all()
-        components_with_states = []
-        # Case, all components are UP
-        if self.__all_status_up(all_components):
-            self.__logger.debug('all components are UP.')
-            # Filter the components which do not have states
-            # such as Command and Steering Service
-            for component in all_components:
-                if component.current_state is not None:
-                    components_with_states.append(component)
-            self.__logger.debug(f'all componenets: {all_components}; '
-                                f'with states: {components_with_states}')
-            # check if all components are in same state
-            if self.__all_have_same_state(components_with_states):
-                return all_components, components_with_states
-            else:
-                return None, None
-
-        # Case, some component is DOWN
+    def __is_system_healthy(self, all_components, components_with_states):
+        if self.__service_registry_manager.are_all_statuses_up(all_components):
+            return self.__service_registry_manager.are_all_have_same_state(components_with_states)
         else:
-            # find which components are DOWN
-            components_not_running = []
-            for component in all_components:
-                self.__logger.debug(f'{component.name} status: '
-                                    f'{component.current_status}.')
-                if component.current_status == SERVICE_COMPONENT_STATUS.DOWN:
-                    components_not_running.append(component)
-                    return None, None
+            return False
+
+    def __is_global_state_up_to_date(self, components_with_states):
+        return bool(self.__service_registry_manager.current_global_state() == components_with_states[0].current_state)
+
+    def __update_global_state(self):
+        return self.__service_registry_manager.update_global_state()
+
+    def __raise_mayday(self):
+        """
+        raises signal interrupt so that Orchestrator could terminate
+        the execution
+        """
+        self.__logger.critical("Global state: 'ERROR'. Raising terminate signal")
+        signal.raise_signal(signal.SIGINT)
 
     @property
     def keep_monitoring(self): return self.__keep_monitoring
@@ -104,48 +70,70 @@ class HealthStatusMonitor:
     def finalize_monitoring(self):
         # stop monitoring
         self.__keep_monitoring = False
-
-    def __trigger_alarm(self):
-        self.__logger.critical('Inconsistent local states. '
-                               'Triggering an alarm!')
-        signal.alarm(1)  # set alarm signal
-
+    
     def __monitor_health_status(self):
         '''
-        Monitors the current status and the current state of each component.
-        Raises an alarm signal, if local states are in-consistent.
+        Monitors the health and status of system  i.e. the global state is
+        up-to-date, and all components have the same local state, they are up
+        and running and no network failure is there.
+
+        1) checks whether the local states of all components are the same and
+        their statuses are 'UP'. If local states are in-consistent or some
+        component is 'DOWN', it raises a terminate signal to indicate
+        Orchestrator to terminate the workflow.
+        
+        2) checks whether the global state is up-to-date. If not it asks
+        registry manager to update it as per the transition rules.
         '''
         # set counter to stop rechecking to ruling out the network delay
         counter = self.__counter
-        while self.__keep_monitoring:
-            # Case a, local states are not the same or all statuses are not UP
-            if self.validate_local_states() == (None, None):
-                if counter == 0:  # network delay is ruled out
-                    # trigger alarm
-                    self.__trigger_alarm()
+        while self.keep_monitoring:
+            # fetch all components from registry
+            all_components = self.__service_registry_manager.find_all()
+            # filter components without states such as C&C service
+            components_with_states =\
+                self.__service_registry_manager.get_components_with_state(all_components)
+            # 1) Check system health i.e. whether all statuses are 'UP' and
+            # the local states are the same
+            if not self.__is_system_healthy(all_components, components_with_states):
+                # network delay could delay the state or status update in registry
+                # check if network delay is ruled out
+                if counter == 0:
+                    # Case: network delay is ruled out
+                    # raise signal so that Orchestrator terminates the workflow
+                    self.__raise_mayday()
                     # stop monitoring
                     self.finalize_monitoring()
-                    # exit to terminate
+                    # exit the loop to terminate
                     break
 
-                # otherwise, let the component update its state in registry
+                # Case: network delay is not ruled out yet
+                # let the component update its state in registry
                 time.sleep(self.__network_delay)
                 # re-check to rule-out the network delay
                 self.__logger.critical(f'inconsistent local states. '
-                                       f're-checking counter: {counter}')
+                                       f're-checking! counter: {counter}')
                 counter = counter - 1
                 continue
 
-            # Case b, all local states are same, and statuses are UP.
-            # reset counter
+            # 2) Check whether the global state is not up-to-date yet
+            if not self.__is_global_state_up_to_date(components_with_states):
+                # update the global state
+                self.__logger.info('updating global state')
+                self.__update_global_state()
+                self.__logger.info('global state is updated')
+
+            # everything is fine i.e. all local states are same, all statuses
+            # are 'UP' and global state is up-to-date
+            # now, reset the counter to rule out network delay
             counter = self.__counter
-            # sleep until next check
+            # sleep until next poll
             time.sleep(self.__network_delay)
             # keep monitoring
             continue
 
-        # monitoring is terminated
-        self.__logger.critical('stopped monitoring.')
+        # 3) monitoring is terminated
+        self.__logger.info('stopped monitoring.')
 
     def start_monitoring(self):
         '''
