@@ -59,9 +59,9 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__application_manager_out_queue = multiprocessing.Manager().Queue()
         # actions (applications) to be launched
         self.__actions = actions
-        
-         # get client to Proxy Manager Server
-        self._proxy_manager_client =  ProxyManagerClient(
+
+        # get client to Proxy Manager Server
+        self._proxy_manager_client = ProxyManagerClient(
             self._log_settings,
             self._configurations_manager)
 
@@ -75,7 +75,7 @@ class ApplicationCompanion(multiprocessing.Process):
         )
 
         # Now, get the proxy to registry manager
-        self.__component_service_registry_manager =\
+        self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
             
         self.__is_registered = multiprocessing.Event()
@@ -113,7 +113,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 2. register with registry
         if (
-            self.__component_service_registry_manager.register(
+            self.__health_registry_manager_proxy.register(
                 os.getpid(),  # id
                 self.__actions["action"],  # name
                 SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION,  # category
@@ -142,7 +142,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 4. get proxy to update the states later in registry
         self.__ac_registered_component_service = (
-            self.__component_service_registry_manager.find_by_id(os.getpid())
+            self.__health_registry_manager_proxy.find_by_id(os.getpid())
         )
         self.__logger.debug(
             f"component service id: "
@@ -189,7 +189,7 @@ class ApplicationCompanion(multiprocessing.Process):
         ------
             return code as int
         """
-        return self.__component_service_registry_manager.update_local_state(
+        return self.__health_registry_manager_proxy.update_local_state(
             self.__ac_registered_component_service, input_command
         )
 
@@ -219,7 +219,7 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__logger.debug(f"response from Application Manager {response}")
         return response
 
-    def __command_execution_response(self, response):
+    def __command_execution_response(self, response, steering_command):
         '''
         helper function to check the response received from Application Manager
         as a response. It could be OK, ERROR or a PID and the local minimum
@@ -236,12 +236,14 @@ class ApplicationCompanion(multiprocessing.Process):
             # Case a. something went wrong during execution of the command
             # NOTE a relevant exception is already logged with traceback by
             # Application Manager
-            self.__logger.info("Error received while executing command.")
+            self.__logger.info("Error received while executing command: "
+                               f"{steering_command.name}")
             # terminate with ERROR
             return Response.ERROR
 
         # Case b. response in not an ERROR
-        self.__logger.info("Command is successfully executed.")
+        self.__logger.info(f"Steering command: '{steering_command.name}' is "
+                           "executed successfully.")
         return Response.OK
 
     def __send_command_to_application_manager(self, command):
@@ -282,7 +284,8 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__logger.debug("starting application Manager.")
         self.__application_manager.start()
         # send INIT command to Application Manager
-        self.__send_command_to_application_manager(SteeringCommands.INIT)
+        steering_command =  SteeringCommands.INIT
+        self.__send_command_to_application_manager(steering_command)
 
         # 4. wait until a response is received from Application Manager after
         # command execution
@@ -292,7 +295,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 5. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
-        return self.__command_execution_response(response)
+        return self.__command_execution_response(response, steering_command)
 
     def __execute_start_command(self):
         """helper function to execute START steering command"""
@@ -307,7 +310,8 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 2. start the application execution
         # send START command to Application Manager
-        self.__send_command_to_application_manager(SteeringCommands.START)
+        steering_command = SteeringCommands.START
+        self.__send_command_to_application_manager(steering_command)
 
         # 3. wait until a response is received from Application Manager after
         # command execution
@@ -315,7 +319,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 4. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
-        return self.__command_execution_response(response)
+        return self.__command_execution_response(response, steering_command)
 
     def __execute_end_command(self):
         """helper function to execute END steering command"""
@@ -328,7 +332,8 @@ class ApplicationCompanion(multiprocessing.Process):
             return self.__respond_with_state_update_error()
 
         # 2. send END command to Application Manager
-        self.__send_command_to_application_manager(SteeringCommands.END)
+        steering_command = SteeringCommands.END
+        self.__send_command_to_application_manager(steering_command)
 
         # 3. wait until a response is received from Application Manager after
         # command execution
@@ -339,7 +344,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 4. send response to orchestrator
         self.__send_response_to_orchestrator(response)
-        return self.__command_execution_response(response)
+        return self.__command_execution_response(response, steering_command)
 
     def __terminate_with_error(self):
         """helper function to terminate the execution with error."""
@@ -394,13 +399,13 @@ class ApplicationCompanion(multiprocessing.Process):
                     # log the exception with traceback details
                     self.__logger.exception(
                         f"Error executing command: "
-                        f"{current_steering_command}. "
+                        f"{current_steering_command.name}. "
                         f"Quiting!"
                     )
                 finally:
                     return self.__terminate_with_error()
 
-            # 3 (a). If END coomand is executed, finish execution as normal
+            # 3 (a). If END command is executed, finish execution as normal
             if current_steering_command == SteeringCommands.END:
                 self.__logger.info("Concluding execution.")
                 # finish execution as normal

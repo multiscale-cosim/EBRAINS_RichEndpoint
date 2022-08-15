@@ -12,12 +12,12 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS, Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 
 
-class StateTransitionRules:
+class StateTransitionValidator:
     """
+    Validates the local and global states as per transition rules.
     """
     def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
@@ -25,28 +25,29 @@ class StateTransitionRules:
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
+        self.__logger.debug("initialized.")
 
     def next_valid_local_state(self, current_state, input_command):
         """
-        returns the next legal state as per the state transition rules i.e.
-        whether the input command is legal to transit from current state
+        Checks whether the constraints are met for local state transition and
+        returns the next valid local state as per transition rules.
 
         Parameters
         ----------
         current_state: STATES.Enum
             current state
 
-        steering_command : SteeringCommands.Enum
-            The input to transit from current state to next legal state
+        input_command : SteeringCommands.Enum
+            The input to transit from current state to next valid state
 
         Returns
         ------
-        next_legal_state: STATES.Enum
-            returns next legal state if the input provided is legal transit
+        next_valid_state: STATES.Enum
+            returns next valid state if the input provided is valid transit
             from current state
 
         ERROR: RESPONSE.Enum
-            returns Error if the input provided is not legal to transit from
+            returns Error if the input provided is not valid to transit from
             current state
         """
         # Case: Transit from state 'READY' with input command 'INIT'
@@ -74,7 +75,7 @@ class StateTransitionRules:
         if current_state == STATES.PAUSED and input_command == SteeringCommands.RESUME:
             return STATES.RUNNING
         
-        # Case: unknown transition rule i.e. the command is not legal for the
+        # Case: unknown transition rule i.e. the command is not valid for the
         # current state
         else:
             return STATES.ERROR
@@ -82,8 +83,8 @@ class StateTransitionRules:
     def next_valid_global_state(self, all_components, components_with_states,
                                 are_all_statuses_up, are_all_have_same_state):
         """
-        1) checks whether the constraints are met for transition
-        2) follows the transition rule to update the global state
+        Checks whether the constraints are met for global state transition and
+        returns the next valid global state as per transition rules.
 
         Parameters
         ----------
@@ -118,7 +119,7 @@ class StateTransitionRules:
         #   2) if ANY constraint is NOT met then
         #   'the Global state is ERROR'
         
-
+        # STEPS:
         # 1) check whether the constrains are met
         # 1.1) CONSTRAINT 1: if all local statuses are 'UP'
         # check with call_back function if all local statuses are 'UP'

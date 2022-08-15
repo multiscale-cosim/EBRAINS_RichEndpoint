@@ -37,7 +37,7 @@ class Platform:
         self.__info["OS Version"] = self.OS_version
         self.__info["Linux Kernel Version"] = self.platform_details
 
-        # Pyton specific details
+        # Python specific details
         self.__info["Python version"] = self.python_version
         self.__info["Python Build info"] = self.python_build
         self.__info["Compiler info"] = self.python_compiler

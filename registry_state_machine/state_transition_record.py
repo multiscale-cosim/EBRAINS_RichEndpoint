@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-# @dataclass(init=False)
 @dataclass
 class LocalStateTransitionRecord:
     # state before transition

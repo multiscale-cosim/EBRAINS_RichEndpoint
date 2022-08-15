@@ -557,7 +557,7 @@ class ApplicationManager(multiprocessing.Process):
 
         # 3. send local minimum step size as a response to Application
         # Companion
-        self.__logger.info(f'outputs are read from {self.__actions_id}: {self.__local_minimum_step_size}')
+        self.__logger.debug(f'outputs are read from {self.__actions_id}: {self.__local_minimum_step_size}')
         self.__send_response_to_application_companion(
             self.__local_minimum_step_size)
         return Response.OK

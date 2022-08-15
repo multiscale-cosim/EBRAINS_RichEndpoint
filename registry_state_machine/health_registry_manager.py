@@ -13,10 +13,10 @@
 # ------------------------------------------------------------------------------
 from EBRAINS_RichEndpoint.registry_state_machine.service_component import ServiceComponent
 from EBRAINS_RichEndpoint.registry_state_machine.service_registry import ServiceRegistry
-from EBRAINS_RichEndpoint.registry_state_machine.state_transition_rules import StateTransitionRules
+from EBRAINS_RichEndpoint.registry_state_machine.state_transition_validator import StateTransitionValidator
 from EBRAINS_RichEndpoint.registry_state_machine.health_status_keeper import HealthStatusKeeper
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
-from EBRAINS_RichEndpoint.registry_state_machine.state_transition_history import LocalStateTransitionRecord
+from EBRAINS_RichEndpoint.registry_state_machine.state_transition_record import LocalStateTransitionRecord
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
 
@@ -38,9 +38,9 @@ class MetaHealthRegistryManager(type):
 
 class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
     '''
-    Manages the registry and discovery of components.
-    Provides wrappers to manipulate the current status and active state
-    of the components.
+    1) Manages the registry and discovery of components.
+    2) Manages the health and status of the individual components and th
+    overall system.
     '''
     def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
@@ -48,54 +48,63 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
-        self.__logger.debug("logger is configured.")
         # instantiate service registry
         self.__service_registry = ServiceRegistry()
         # instantiate state transition manager
-        self.__state_transition_rules = StateTransitionRules(self._log_settings,
-                                                         self._configurations_manager)
+        self.__state_transition_validator = StateTransitionValidator(
+                                                self._log_settings,
+                                                self._configurations_manager)
         # instantiate global health and status manager object
         self.__global_health_keeper = HealthStatusKeeper(self._log_settings,
                                                          self._configurations_manager)
         # initialize the global state to 'INITIALIZING'
         self.__global_health_keeper.initialize_global_state(STATES.INITIALIZING)
-        # initilaize list to track global state transitions
+        # initialize list to track global state transitions
         self.__global_state_transition_history = [self.current_global_state().name]
         # list to track local state transitions
         self.__local_state_transition_history = []
+        self.__logger.debug("Initialized.")
 
     def __update_component_in_registry(self, component) -> bool:
         """
-        helper function for registry update.
+        helper function to update the given component in registry.
         """
         return self.__service_registry.update_component_in_registry(component)
 
-    def __get_components_with_status_down(self, all_components):
-        #  find which components are DOWN
-        components_not_running = []
-        for component in all_components:
-            self.__logger.debug(f'{component.name} status: '
-                                f'{component.current_status}.')
-            if component.current_status == SERVICE_COMPONENT_STATUS.DOWN:
-                components_not_running.append(component)
-        return components_not_running
-
-    def __log_exception_with_traceback(self, message):
-        try:
-            # raise error
-            raise RuntimeError
-        except RuntimeError:
-            # log the exception with traceback
-            self.__logger.exception(message)
-
-    def __create_state_transition_record(self, state_before_transition, input_command, state_after_transition):
+    def __create_local_state_transition_record(self,
+                                               state_before_transition,
+                                               input_command,
+                                               state_after_transition):
+        """helper function to create the local state transition record"""
         return LocalStateTransitionRecord(state_before_transition,
                                           input_command,
                                           state_after_transition)
 
-    def __get_next_legal_state(self, current_state, input_command):
+    def __next_valid_local_state(self, current_state, input_command):
+        """
+        helper function to get the next valid local state as per transition
+        rules.
+
+        Parameters
+        ----------
+        current_state: STATES.Enum
+            current state
+
+        input_command : SteeringCommands.Enum
+            The input to transit from current state to next valid state
+
+        Returns
+        ------
+        next_valid_state: STATES.Enum
+            returns next valid state if the input provided is valid transit
+            from current state
+
+        ERROR: RESPONSE.Enum
+            returns Error if the input provided is not valid to transit from
+            current state
+        """
         # get next legal state as per the transition rule
-        next_state = self.__state_transition_rules.next_valid_local_state(
+        next_state = self.__state_transition_validator.next_valid_local_state(
             current_state, input_command)
         self.__logger.debug(f"next legal state: {next_state}")
         if next_state == Response.ERROR:
@@ -105,6 +114,48 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
             return Response.ERROR
         else:
             return next_state
+
+    def __update_global_state(self, next_valid_global_state):
+        """helper function to transit the global state to next valid state."""
+        self.__global_health_keeper.update_global_state(
+            next_valid_global_state)
+        # record the transition to history
+        self.__global_state_transition_history.append(
+            self.current_global_state().name)
+        self.__logger.debug(f'current global state state after update: '
+                            f'{self.current_global_state()}')
+        if next_valid_global_state == STATES.ERROR:
+            # log the exception with traceback
+            self.__log_exception_with_traceback('Transition Rule is not satisfied')
+            return Response.ERROR
+        else:
+            return Response.OK
+
+    def __update_local_state(self, target_component, next_valid_state):
+        """helper function to update the local state of target component"""
+        target_component.current_state = next_valid_state
+        if self.__update_component_in_registry(target_component):
+            self.__logger.debug(f'{target_component.name} local state is updated '
+                                f'to: {target_component.current_state}')
+            # state is updated, return proxy to up-to-date component
+            return target_component
+        else:
+            # log exception with traceback
+            self.__log_exception_with_traceback(f'{target_component.name}: '
+                                                'is not found in registry.')
+            # return with error to terminate
+            return Response.ERROR
+
+    def __log_exception_with_traceback(self, message):
+        """
+        helper function to log the exception with traceback and user
+        provided message"""
+        try:
+            # raise RunTimeError exception
+            raise RuntimeError
+        except RuntimeError:
+            # log the exception with traceback
+            self.__logger.exception(message)
 
     def register(self, id, name, category, endpoint,
                  current_status, current_state):
@@ -142,33 +193,33 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         # register the data object in registry
         return self.__service_registry.register(service_component)
 
-    # providing this functionality for the sake of completion;
-    # not sure if needed. Uncomment if needed.
+    # NOTE: This functionality is provided only for the sake of completion.
+    # Uncomment it if the functionality is needed.
     # def de_register(self, component):
         # return self.__service_registry.de_register(component)
 
     def find_by_id(self, component_id) -> ServiceComponent:
-        '''wrapper to fetch from registry by id.'''
+        '''wrapper to fetch component from registry by id.'''
         return self.__service_registry.find_by_id(component_id)
 
     def find_by_name(self, component_name) -> ServiceComponent:
-        '''wrapper to fetch from registry by name.'''
+        '''wrapper to fetch component from registry by name.'''
         return self.__service_registry.find_by_name(component_name)
 
     def find_all(self) -> list:
-        '''wrapper to fetch all from registry.'''
+        '''wrapper to fetch all components from registry.'''
         return self.__service_registry.find_all()
 
     def find_all_by_category(self, category) -> list:
-        '''wrapper to fetch all from registry by given category.'''
+        '''wrapper to fetch all components from registry by given category.'''
         return self.__service_registry.find_all_by_category(category)
 
     def find_all_by_status(self, status) -> list:
-        '''wrapper to fetch all from registry by given status.'''
+        '''wrapper to fetch all components from registry by given status.'''
         return self.__service_registry.find_all_by_status(status)
 
     def find_all_by_state(self, state) -> list:
-        '''wrapper to fetch all from registry by state.'''
+        '''wrapper to fetch all components from registry by state.'''
         return self.__service_registry.find_all_by_state(state)
 
     def update_status(self, component, current_status):
@@ -197,7 +248,7 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
                                 f'status could not be updated.')
             return Response.ERROR
 
-    def are_all_statuses_up(self, target_components):
+    def are_all_statuses_up(self, target_components) -> bool:
         """"
         checks the current local statuses of all components.
         Returns boolean value indicating whether all current local
@@ -206,167 +257,93 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         return all(component.current_status == SERVICE_COMPONENT_STATUS.UP
                    for component in target_components)
 
-    def are_all_have_same_state(self, target_components):
+    def are_all_have_same_state(self, tar_components) -> bool:
         """"
-        helper function to check the current local states of all components.
-        Returns boolean value indicating whether all current local
-        states are same.
+        checks whether the current local states of all components is same.
+        Returns boolean value indicating whether all current local states are
+        same.
         """
         return all(
-            component.current_state == target_components[0].current_state
-            for component in target_components)
+            component.current_state == tar_components[0].current_state
+            for component in tar_components)
 
-    def get_components_with_state(self, components):
+    def components_with_state(self, all_components):
+        """
+        Filters the components without states such as C&C service, and returns
+        only the components which have states.
+
+        Parameters
+        ----------
+        all_components : ServiceComponent
+            the list of components to be filtered by state
+
+        current_status: SERVICE_COMPONENT_STATUS
+            current status to update
+
+        Returns
+        -------
+        components_with_state: list
+            list of components which have states e.g. Application Companions
+        """
         components_with_states = []
-        for component in components:
+        for component in all_components:
             if component.current_state is not None:
                 components_with_states.append(component)
-        self.__logger.debug(f'all components: {components}; '
+        self.__logger.debug(f'all components: {all_components}; '
                             f'with states: {components_with_states}')
         return components_with_states
 
     def current_global_status(self):
-        """Wrapper tp get the current global status of the System."""
+        """Wrapper to get the current global status of the system."""
         return self.__global_health_keeper.current_global_status()
 
     def current_global_state(self):
-        """Wrapper to get the current global state of the System."""
+        """Wrapper to get the current global state of the system."""
         return self.__global_health_keeper.current_global_state()
 
-    def __update_global_state(self, next_valid_global_state):
-        """helper function to update the local state to of target component"""
-        self.__global_health_keeper.update_global_state(next_valid_global_state)
-        # record the transition to history
-        self.__global_state_transition_history.append(self.current_global_state().name)
-        self.__logger.info(f'current global state state after update: '
-                            f'{self.current_global_state()}')
-        if next_valid_global_state == STATES.ERROR:
-            # log the exception with traceback
-            self.__log_exception_with_traceback('Transition Rule is not satisfied')
-            return Response.ERROR
-        else:
-            return Response.OK
-    
-    def update_global_state(self):
-        """
-        1) checks whether the constraints are met for transition
-        2) follows the transition rule to update the global state
-        """
-        self.__logger.info(f'current global state before update: '
-                           f'{self.current_global_state()}')
-        # 1) fetch all components from registry
-        all_components = self.find_all()
-        components_with_states = self.get_components_with_state(all_components)
-        
-        # get next valid global state
-        next_valid_global_state = self.__state_transition_rules.next_valid_global_state(
-            all_components, components_with_states, self.are_all_statuses_up,
-            self.are_all_have_same_state)
-        
-        # check if globals state is already updated by global health monitor
-        if self.current_global_state() == next_valid_global_state:
-            self.__logger.info("global state is already up-to-date")
-            return Response.OK
-        
-        # 3) otherwise, update the global state
-        return self.__update_global_state(next_valid_global_state)
-        
-    
-    # def update_global_state(self):
-    #     """
-    #     1) checks whether the constraints are met for transition
-    #     2) follows the transition rule to update the global state
-    #     """
-    #     # NOTE: Transition rule to update global state
-    #     #   RULE: Global state is the same as the local state of a given
-    #     #         component
-    #     #   CONSTRAINT: 1) all local statuses must be 'UP'
-    #     #               2) all local states must be the same
-    #     #   ERROR: if the constraint is not met then the global state is ERROR
-    #     self.__logger.debug(f'current global state before update: '
-    #                         f'{self.__global_health_keeper.current_global_state()}')
-    #     # 1) fetch all components from registry
-    #     all_components = self.find_all()
-        
-    #     # 2) check whether the constrains are met
-    #     # 2.1) check if all local statuses are 'UP'
-    #     # Case 1, some component is DOWN
-    #     if not self.are_all_statuses_up:
-    #         # update global state to ERROR
-    #         self.__global_health_keeper.update_global_state(STATES.ERROR)
-    #         # get which components are 'DOWN'
-    #         self.__logger.critical(f'components are DOWN: '
-    #                                f'{self.__get_components_with_status_down(all_components)}')
-    #         # log the exception with traceback and return with ERROR to terminate
-    #         self.__log_exception_with_traceback('global state can not be updated')
-    #         # return with ERROR to terminate
-    #         return Response.ERROR
-
-    #     # Case 2: all components are 'UP', now update the global state
-    #     # as per transition rule
-    #     self.__logger.debug("all components are 'UP'")
-
-    #     # filter components without states such as C&C service
-    #     components_with_states = self.get_components_with_state(all_components)
-        
-    #     # check if globals state is already updated by global health monitor
-    #     if self.current_global_state() == components_with_states[0].current_state:
-    #         self.__logger.debug("global state is already up-to-date")
-    #         self.__global_state_transition_history.append(self.current_global_state().name)
-    #         return Response.OK
-
-    #     # 2.2) Now, check if all local states are same
-    #     # Case 1: components have different states
-    #     if not self.are_all_have_same_state(components_with_states):
-    #         # update global state to ERROR
-    #         self.__global_health_keeper.update_global_state(STATES.ERROR)
-    #         # log the exception with traceback
-    #         self.__log_exception_with_traceback('components have different states.'
-    #                                             ' global state can not be updated')
-    #         # return with ERROR to terminate
-    #         return Response.ERROR
-
-    #     # Case 2: all components have same state
-
-    #     self.__logger.debug(f'current state of all components: '    
-    #                        f'{components_with_states[0].current_state}')
-
-    #     # 3) Both constraints are satisfied. Now, follow the transition rule
-    #     # to update the global state to the local state of any component
-    #     self.__global_health_keeper.update_global_state(
-    #         components_with_states[0].current_state)
-    #     self.__global_state_transition_history.append(self.current_global_state())
-    #     self.__logger.debug(f'current global state state after update: '
-    #                         f'{self.__global_health_keeper.current_global_state()}')
-    #     return Response.OK
-
-    def update_state_transition_history(self, state_before_transition,
-                                        input_command, state_after_transition):
-        # create a state transition record
-        self.__local_state_transition_record = self.__create_state_transition_record(
-            state_before_transition, input_command, state_after_transition)
-        self.__local_state_transition_history.append(self.__local_state_transition_record)
-
-    def get_local_state_transition_history(self):
+    def local_state_transition_history(self):
+        """wrapper function to fetch local state transition history"""
         return self.__local_state_transition_history
 
-    def get_global_state_transition_history(self):
+    def global_state_transition_history(self):
+        """wrapper function to fetch global state transition history"""
         return self.__global_state_transition_history
-    
-    def __update_local_state(self, target_component, next_legal_state):
-        """helper function to update the local state to of target component"""
-        target_component.current_state = next_legal_state
-        if self.__update_component_in_registry(target_component):
-            self.__logger.debug(f'{target_component.name} local state is updated to: '
-                                f'{target_component.current_state}')
-            # state is updated, return proxy to up-to-date component
-            return target_component
-        else:
-            # log exception with traceback
-            self.__log_exception_with_traceback(f'{target_component.name}: '
-                                                'is not found in registry.')
-            # return with error to terminate
-            return Response.ERROR
+
+    def system_up_time(self):
+        """wrapper function to fetch the up time of system since the start."""
+        uptime_till_now = self.__global_health_keeper.uptime_till_now()
+        self.__logger.debug(f"up time till now: {uptime_till_now}")
+        return uptime_till_now     
+
+    def update_global_state(self):
+        """
+        1) Checks whether the constraints are met for global state transition
+        2) Updates the global state to the next valid global state as per
+        transition rules.
+        Returns an int code indicating whether or not the globals state is
+        updated.
+        """
+        self.__logger.debug(f'current global state before update: '
+                            f'{self.current_global_state()}')
+        # 1) fetch all components from registry
+        all_components = self.find_all()
+        components_with_states = self.components_with_state(all_components)
+
+        # get next valid global state
+        next_valid_global_state =\
+            self.__state_transition_validator.next_valid_global_state(
+                all_components,
+                components_with_states,
+                self.are_all_statuses_up,
+                self.are_all_have_same_state)
+
+        # check if globals state is already updated by global health monitor
+        if self.current_global_state() == next_valid_global_state:
+            self.__logger.debug("global state is already up-to-date")
+            return Response.OK
+
+        # 3) otherwise, update the global state
+        return self.__update_global_state(next_valid_global_state)
 
     def update_local_state(self, component, input_command):
         """
@@ -376,9 +353,6 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         ----------
         component : ServiceComponent
             proxy to service component whose local state is to be updated
-
-        current_state: STATE.Enum
-            current local state
 
         input_command: SteeringCommands.Enum
             the command to transit from the current state to next legal state
@@ -392,19 +366,53 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         self.__logger.debug(f'current local state: {current_state}')
         self.__logger.debug(f'input command: {input_command}')
         # validate transition rule to get the next legal state
-        next_legal_state = self.__get_next_legal_state(
+        next_legal_state = self.__next_valid_local_state(
             current_state, input_command)
 
         # Case a: transition rule is not valid and local state is ERROR
         if next_legal_state == STATES.ERROR:
             self.__update_local_state(component, next_legal_state)
             # log exception with traceback
-            self.__log_exception_with_traceback("invalid transition rule."
-                                                " local state is transited to:"
-                                                f" {next_legal_state.name}")
+            self.__log_exception_with_traceback("invalid transition rule. "
+                                                "local state is transited to: "
+                                                f"{next_legal_state.name}")
             # return with ERROR to terminate
             return Response.ERROR
 
         # Case b: transition rule is valid
         # update component's local state to next legal state
         return self.__update_local_state(component, next_legal_state)
+
+    def components_with_status_down(self, all_components):
+        """
+        Filters the components with status 'DOWN' from the list of given
+        components and returns a list of them.
+
+        Parameters
+        ----------
+        all_components : list
+            the list of components to be filtered by status
+
+        Returns
+        -------
+        components_not_running: list
+            list of components which status 'DOWN'
+        """
+        components_not_running = []
+        for component in all_components:
+            self.__logger.debug(f'{component.name} status: '
+                                f'{component.current_status}.')
+            if component.current_status == SERVICE_COMPONENT_STATUS.DOWN:
+                components_not_running.append(component)
+        return components_not_running
+
+    def update_state_transition_history(self, state_before_transition,
+                                        input_command, state_after_transition):
+        """
+        creates a state transition record and append it to the local state
+        transition history.
+        """
+        # create a state transition record
+        self.__local_state_transition_record = self.__create_local_state_transition_record(
+            state_before_transition, input_command, state_after_transition)
+        self.__local_state_transition_history.append(self.__local_state_transition_record)

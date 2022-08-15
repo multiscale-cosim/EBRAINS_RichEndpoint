@@ -18,8 +18,7 @@ from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 
 class HealthStatusKeeper:
     """
-    i)  Manages the global state transitions, and
-    ii) Monitors the overall health and validity of the workflow.
+    Manages the  overall health and validity of the workflow.
     """
     def __init__(self, log_settings, configurations_manager) -> None:
         self._log_settings = log_settings
@@ -30,7 +29,7 @@ class HealthStatusKeeper:
 
         # instantiate the health and status data object,
         self.__health_status = HealthStatus()
-        self.__logger.info("initialized.")
+        self.__logger.debug("initialized.")
 
     def __update_last_health_updated(self):
         """"updates the health check times stamp."""
@@ -43,8 +42,11 @@ class HealthStatusKeeper:
         self.__health_status.current_global_state = state
         self.__logger.info(f'global state is transited to '
                            f'{self.__health_status.current_global_state}')
-        self.__logger.info(f'uptime now: {self.uptime()}')
 
+    def __last_health_check(self):
+        """returns the timestamp when the health and status is last updated."""
+        return self.__health_status.last_updated
+    
     def current_global_status(self):
         """returns the current global status of the System."""
         return self.__health_status.current_global_status
@@ -53,17 +55,14 @@ class HealthStatusKeeper:
         """returns the current global state of the System."""
         return self.__health_status.current_global_state
 
-    def uptime(self):
+    def uptime_till_now(self):
         """
-        returns the running uptime of the system
-        when this method is called.
+        returns the running uptime of the system since the start.
         """
-        return (datetime.now() - self.__health_status.uptime)
+        uptime_till_now = datetime.now() - self.__health_status.uptime
+        self.__logger.debug(f"up time till now: {uptime_till_now}")
+        return uptime_till_now
 
-    def __last_health_check(self):
-        """returns the timestamp when the health and status is last updated."""
-        return self.__health_status.last_updated
-    
     def initialize_global_state(self, initial_state):
         self.__transit_global_state(initial_state)
     

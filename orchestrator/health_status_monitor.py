@@ -34,7 +34,7 @@ class HealthStatusMonitor:
                                         name=__name__,
                                         log_configurations=self._log_settings)
         # proxy to registry service
-        self.__service_registry_manager = service_registry_manager
+        self.__health_registry_manager_proxy = service_registry_manager
         self.__network_delay = network_delay
         # counter to rule out the network delay before transitioning the
         # global state to ERROR
@@ -45,21 +45,36 @@ class HealthStatusMonitor:
         self.__logger.debug("initialized.")
 
     def __is_system_healthy(self, all_components, components_with_states):
-        if self.__service_registry_manager.are_all_statuses_up(all_components):
-            return self.__service_registry_manager.are_all_have_same_state(components_with_states)
+        """
+        helper function to determine whether the system is healthy i.e.
+        1) all components are 'UP' and running
+        2) local states of all components are same
+        """
+        # check if all components are 'UP' and running
+        if self.__health_registry_manager_proxy.are_all_statuses_up(all_components):
+            # Case a: All components are 'UP' and running
+            # now, check if all components have same local states
+            return self.__health_registry_manager_proxy.are_all_have_same_state(components_with_states)
         else:
+            # Case b: some components are 'DOWN'
+            components_with_status_down =\
+                self.__health_registry_manager_proxy.components_with_status_down(all_components)
+            self.__logger.critical(f"components_with_status_down:"
+                                   f" {components_with_status_down}")
             return False
 
     def __is_global_state_up_to_date(self, components_with_states):
-        return bool(self.__service_registry_manager.current_global_state() == components_with_states[0].current_state)
+        """checks if the global state is already up-to-date"""
+        return bool(self.__health_registry_manager_proxy.current_global_state() == components_with_states[0].current_state)
 
     def __update_global_state(self):
-        return self.__service_registry_manager.update_global_state()
+        """wrapper function to update the global state."""
+        return self.__health_registry_manager_proxy.update_global_state()
 
     def __raise_mayday(self):
         """
-        raises signal interrupt so that Orchestrator could terminate
-        the execution
+        raises interrupt signal so that Orchestrator could terminate the
+        execution.
         """
         self.__logger.critical("Global state: 'ERROR'. Raising terminate signal")
         signal.raise_signal(signal.SIGINT)
@@ -73,9 +88,10 @@ class HealthStatusMonitor:
     
     def __monitor_health_status(self):
         '''
-        Monitors the health and status of system  i.e. the global state is
-        up-to-date, and all components have the same local state, they are up
-        and running and no network failure is there.
+        Target function for monitoring thread to monitors the health and
+        status of system i.e. the global state is up-to-date, all components
+        have the same local state and they are 'UP' and running and no network
+        failure is there.
 
         1) checks whether the local states of all components are the same and
         their statuses are 'UP'. If local states are in-consistent or some
@@ -87,17 +103,18 @@ class HealthStatusMonitor:
         '''
         # set counter to stop rechecking to ruling out the network delay
         counter = self.__counter
+        # monitoring loop
         while self.keep_monitoring:
             # fetch all components from registry
-            all_components = self.__service_registry_manager.find_all()
+            all_components = self.__health_registry_manager_proxy.find_all()
             # filter components without states such as C&C service
             components_with_states =\
-                self.__service_registry_manager.get_components_with_state(all_components)
+                self.__health_registry_manager_proxy.components_with_state(all_components)
             # 1) Check system health i.e. whether all statuses are 'UP' and
             # the local states are the same
             if not self.__is_system_healthy(all_components, components_with_states):
-                # network delay could delay the state or status update in registry
-                # check if network delay is ruled out
+                # NOTE: network delay could delay the state or status update in
+                # registry. So, check if network delay is already ruled out.
                 if counter == 0:
                     # Case: network delay is ruled out
                     # raise signal so that Orchestrator terminates the workflow
@@ -107,8 +124,8 @@ class HealthStatusMonitor:
                     # exit the loop to terminate
                     break
 
-                # Case: network delay is not ruled out yet
-                # let the component update its state in registry
+                # Case: network delay is not ruled out yet. So, let the
+                # component update its state in registry.
                 time.sleep(self.__network_delay)
                 # re-check to rule-out the network delay
                 self.__logger.critical(f'inconsistent local states. '
@@ -119,9 +136,11 @@ class HealthStatusMonitor:
             # 2) Check whether the global state is not up-to-date yet
             if not self.__is_global_state_up_to_date(components_with_states):
                 # update the global state
-                self.__logger.info('updating global state')
+                self.__logger.debug('updating global state')
                 self.__update_global_state()
-                self.__logger.info('global state is updated')
+                self.__logger.info(
+                    f'global state is updated to '
+                    f'{self.__health_registry_manager_proxy.current_global_state()}')
 
             # everything is fine i.e. all local states are same, all statuses
             # are 'UP' and global state is up-to-date
@@ -157,7 +176,7 @@ class HealthStatusMonitor:
                             f"{self.__threads_started}")
         # test if monitoring threads are running
         if(len(self.__threads_started) == threading.active_count()):
-            self.__logger.debug('monitoring deamon thread started.')
+            self.__logger.debug('monitoring daemon thread started.')
             return Response.OK
         else:
             return Response.ERROR
