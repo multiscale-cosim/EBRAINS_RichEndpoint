@@ -57,17 +57,17 @@ class CommandControlService(multiprocessing.Process):
         )
 
         # Now, get the proxy to registry manager
-        self.__component_service_registry_manager =\
-             self._proxy_manager_client.get_registry_proxy()
+        self.__health_registry_manager_proxy =\
+            self._proxy_manager_client.get_registry_proxy()
 
         # flag to indicate whether C&S service
         # is registered with registry service
         self.__is_registered = multiprocessing.Event()
         # initialize the Communicator object for communication via Queues
         self.__communicator = None
-        # careate a list of application companions input queues proxies
+        # create a list of application companions input queues proxies
         self.__application_companions_in_queues = []
-        # careate a list of application companions output queues proxies
+        # create a list of application companions output queues proxies
         self.__application_companions_out_queues = []
         self.__logger.debug("C&S service initialized.")
 
@@ -91,7 +91,7 @@ class CommandControlService(multiprocessing.Process):
         register with registry, initialize the Communicator object, etc.
         """
         # register with registry
-        if(self.__component_service_registry_manager.register(
+        if(self.__health_registry_manager_proxy.register(
                     os.getpid(),  # id
                     SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # name
                     SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # category
@@ -107,17 +107,17 @@ class CommandControlService(multiprocessing.Process):
             # quit with ERROR if not registered
             return Response.ERROR
 
-    def __setup_channeling_to_application_compnanions(self):
+    def __setup_channeling_to_application_companions(self):
         '''sets up channeling to application companions for communication.'''
         # fetch proxies for application companions for communication
-        application_companions = self.__component_service_registry_manager.\
+        application_companions = self.__health_registry_manager_proxy.\
             find_all_by_category(
                             SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION)
         self.__logger.debug(f'found application companions: '
                             f'{len(application_companions)}')
-        # careate a list of application companions input endpoints proxies
+        # create a list of application companions input endpoints proxies
         self.__application_companions_in_queues = []
-        # careate a list of application companions output endpoints proxies
+        # create a list of application companions output endpoints proxies
         self.__application_companions_out_queues = []
         # populate the lists
         for application_companion in application_companions:
@@ -195,7 +195,7 @@ class CommandControlService(multiprocessing.Process):
                     self.__logger.exception('could not broadcast.')
                 # TODO: handle broadcast failure, maybe retry after a while
                 # for now, terminate with error
-                self.__logger.critical('Termianting chanelling.')
+                self.__logger.critical('Terminating channeling.')
                 return Response.ERROR
 
             # Case, steering command is broadcasted successfully
@@ -216,7 +216,7 @@ class CommandControlService(multiprocessing.Process):
                 # TODO: handle response forwarding failure, maybe retry
                 # after a while
                 # for now, terminate with error
-                self.__logger.critical('Termianting chanelling.')
+                self.__logger.critical('Terminating channelling.')
                 return Response.ERROR
 
             # Case b, responses are forwarded successfully
@@ -225,12 +225,11 @@ class CommandControlService(multiprocessing.Process):
             # 4. Terminate the loop if the broadcasted steering command was
             # END command
             if current_steering_command == SteeringCommands.END.value:
-                self.__logger.info('Concluding Command and Control '
-                                   'chanelling.')
+                self.__logger.info('Concluding Command and Control channelling.')
                 # exit with OK, after END command execution
                 return Response.OK
 
-            # Otherwise continue chanelling
+            # Otherwise continue channelling
             continue
 
     def run(self):
@@ -241,13 +240,13 @@ class CommandControlService(multiprocessing.Process):
                 raise RuntimeError
             except RuntimeError:
                 # log the exception with traceback
-                self.__logger.exception('Command and Control servoce could '
+                self.__logger.exception('Command and Control service could '
                                         'not be registered. Quitting!')
             # terminate with ERROR
             return Response.ERROR
 
         # 2. setup channels to application companions for communication
-        if self.__setup_channeling_to_application_compnanions() ==\
+        if self.__setup_channeling_to_application_companions() ==\
                 Response.ERROR:
             try:
                 # raise an exception

@@ -20,7 +20,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringComm
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
-from EBRAINS_RichEndpoint.orchestrator.state_enums import STATES
+from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
 

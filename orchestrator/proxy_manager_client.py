@@ -23,7 +23,6 @@ class ProxyManagerClient:
         self.__proxy_manager_client = None
         self.__logger.debug("initialized.")
 
-
     def connect(self, ip, port, key):
         '''
         connects with Proxy Manager Server at given IP:Port address using
