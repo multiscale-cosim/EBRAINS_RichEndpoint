@@ -11,8 +11,8 @@
 #       Team: Multi-scale Simulation and Design
 #
 # ------------------------------------------------------------------------------
-import queue
 import signal
+import pickle
 
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
@@ -20,7 +20,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.orchestrator.communicator_base import CommunicatorBaseClass
 
 
-class CommunicatorQueue(CommunicatorBaseClass):
+class CommunicatorZMQ(CommunicatorBaseClass):
     '''
     Implements the CommunicatorBaseClass for abstracting
     the underlying communication protocol. This class provides wrappers
@@ -44,36 +44,41 @@ class CommunicatorQueue(CommunicatorBaseClass):
         self.__kill_event = self.__signal_manager.kill_event
         self.__logger.debug("initialized.")
 
-    def receive(self, endpoint_queue):
+    def receive(self, zmq_socket, topic=None):
         """
         Retrieves the event from the queue.
 
         Parameters
         ----------
-        endpoint_queue : queue
-            queue to retrieve the event from
+        zmq_socket : ZmqContext.socket
+            the socket bound for receiving
 
         Returns
         ------
-        event from the queue
+        message received
         """
-        while True:
-            # wait until an event is retrieved
-            # or the process is forcefully quit
+        message = None
+        # wait until a message is received or the process is forcefully
+        # quit
+        while message is None:
+            # check if process is set to forcefully quit
             if self.__stop_event.is_set() or self.__kill_event.is_set():
                 self.__logger.critical('quitting forcefully!')
                 return EVENT.FATAL
-            else:
-                try:
-                    # TODO: Configure the timeout value from XML files
-                    current_event = endpoint_queue.get(timeout=10)
-                except queue.Empty:
-                    self.__logger.debug(f'waiting for the event in {queue}!')
-                    continue
-                else:
-                    return current_event
+            # Otherwise, wait to receive the message
+            try:
+                message = zmq_socket.recv_pyobj()
+            except Exception:
+                # Case, receive time is out
+                self.__logger.debug(f'socket: {zmq_socket} waiting for the response!')
+                # continue waiting
+                continue
 
-    def send(self, message, endpoint_queue):
+        # Message is received
+        self.__logger.debug(f'message received: {message}')
+        return message
+
+    def send(self, message, zmq_socket):
         """sends the message to specified endpoint.
 
         Parameters
@@ -81,47 +86,56 @@ class CommunicatorQueue(CommunicatorBaseClass):
         message : ...
             the message to be sent
 
-        endpoint : ...
-            destination where the message to bs sent
+        zmq_socket : ZmqContext.socket
+            the socket bound for sending
 
         Returns
         ------
             return code as int
         """
-        self.__logger.debug('sending message.')
+        self.__logger.debug(f'sending {message}')
         try:
-            endpoint_queue.put(message)
-            self.__logger.debug('message is sent.')
+            zmq_socket.send_pyobj(message)
+            # message is sent
             return Response.OK
-        except queue.Full:
-            self.__logger.exception(f'{endpoint_queue} is full.',
-                                    exc_info=True)
+        except Exception:
+            # message could not be sent
+            # log the exception with traceback
+            self.__logger.exception(f"message {message} could not be sent")
             return Response.ERROR
 
-    def broadcast_all(self, message, endpoints_queues):
-        """broadcasts the message to all specified endpoints.
+    def broadcast_all(self, message, zmq_socket, topic=None):
+        """
+        broadcasts a given message.
 
         Parameters
         ----------
+        message : ...
+            the message to be broadcasted
 
-       message : ...
-            the message to be sent
+        zmq_socket : ZmqContext.socket
+            the socket bound for publishing
 
-        endpoints : ...
-            destinations where the message to bs broadcasted
+        topic: bytes
+            the topic which is associated with the broadcast for filtering
+            NOTE the filtering is done on subscriber's side
 
         Returns
         ------
             return code as int
         """
-        self.__logger.debug(f'broadcasting {message} '
-                            f'to {len(endpoints_queues)}.')
+        self.__logger.debug(f'broadcasting {message}')
         try:
-            for endpoint_queue in endpoints_queues:
-                self.__logger.debug(f'sending to {endpoint_queue}')
-                endpoint_queue.put(message)
-                self.__logger.debug(f'sent {message} to {endpoint_queue}')
+            if topic is not None:
+                # send topic in broadcast so the subscriber could filter it
+                zmq_socket.send_multipart([topic, pickle.dumps(message)])
+            else:
+                # just broadcast the message
+                self.send(message, zmq_socket)
+            # message is sent
             return Response.OK
-        except queue.Full:
-            self.__logger.exception(f'{endpoint_queue} is full.')
+        except Exception:
+            # message could not be broadcasted
+            # log the exception with traceback
+            self.__logger.exception(f"message {message} could not be broadcasted")
             return Response.ERROR

@@ -14,17 +14,21 @@
 import multiprocessing
 import os
 import signal
+import pickle
 
-from common.utils import proxy_manager_server_utils
+from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
-from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
+from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
+from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
+from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
@@ -34,25 +38,22 @@ class ApplicationCompanion(multiprocessing.Process):
     and controls its execution flow as per the steering commands.
     """
 
-    def __init__(
-        self,
-        log_settings,
-        configurations_manager,
-        actions
-    ):
+    def __init__(self, log_settings, configurations_manager, actions,
+                 proxy_manager_connection_details,
+                 port_range=None):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
             name=__name__, log_configurations=self._log_settings
         )
-        # proxies to the shared queues
-        self.__application_companion_in_queue = (
-            multiprocessing.Manager().Queue()
-        )  # for in-comming messages
-        self.__application_companion_out_queue = (
-            multiprocessing.Manager().Queue()
-        )  # for out-going messages
+        # # proxies to the shared queues
+        # self.__application_companion_in_queue = (
+        #     multiprocessing.Manager().Queue()
+        # )  # for in-comming messages
+        # self.__application_companion_out_queue = (
+        #     multiprocessing.Manager().Queue()
+        # )  # for out-going messages
         # for sending the commands to Application Manager
         self.__application_manager_in_queue = multiprocessing.Manager().Queue()
         # for receiving the responses from Application Manager
@@ -69,9 +70,9 @@ class ApplicationCompanion(multiprocessing.Process):
         # NOTE: it terminates with RuntimeError if connection could ne be made
         # for whatever reasons
         self._proxy_manager_client.connect(
-            proxy_manager_server_utils.IP,
-            proxy_manager_server_utils.PORT,
-            proxy_manager_server_utils.KEY,
+            proxy_manager_connection_details["IP"],
+            proxy_manager_connection_details["PORT"],
+            proxy_manager_connection_details["KEY"],
         )
 
         # Now, get the proxy to registry manager
@@ -83,10 +84,12 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__affinity_manager = AffinityManager(
             self._log_settings, self._configurations_manager
         )
+        self.__port_range = port_range
         # restrict Application Companion to a single core (i.e core 1) only
         # so not to interrupt the execution of the main application
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
         self.__communicator = None
+        self.__endpoints_address = None
         self.__ac_registered_component_service = None
         self.__application_manager = None
         self.__logger.debug("Application Companion is initialized")
@@ -94,6 +97,112 @@ class ApplicationCompanion(multiprocessing.Process):
     @property
     def is_registered_in_registry(self):
         return self.__is_registered
+
+    def __get_component_from_registry(self, target_components_category) -> list:
+        """
+        helper function for retrieving the proxy of registered components by
+        category.
+
+        Parameters
+        ----------
+        target_components_category : SERVICE_COMPONENT_CATEGORY.Enum
+            Category of target service components
+
+        Returns
+        ------
+        components: list
+            list of components matches category with parameter
+            target_components_category
+        """
+        components = self.__health_registry_manager_proxy.\
+            find_all_by_category(target_components_category)
+        self.__logger.debug(
+            f'found components: {len(components)}')
+        return components
+
+    def __get_command_control_endpoint(self):
+        # fetch C&C from registry
+        self.__command_and_control_service =\
+            self.__get_component_from_registry(
+                        SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL)
+        self.__logger.debug(f'command and steering service: '
+                            f'{self.__command_and_control_service[0]}')
+        # fetch C&C endpoint <ip:port>
+        return self.__command_and_control_service[0].endpoint[
+            SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION]
+
+    def __setup_command_control_channel(self, ports_for_command_control_channel):
+        """creates communication endpoints"""
+        # if the range of ports are not provided then use the shared queues
+        # assuming that it is to be deployed on laptop/single node
+        if ports_for_command_control_channel is None:
+            # proxies to the shared queues
+            # for in-coming messages
+            self.__queue_in = (
+                multiprocessing.Manager().Queue()
+            )
+            # for out-going messages
+            self.__queue_out = (
+                multiprocessing.Manager().Queue()
+            )
+            self.__endpoints_address = (self.__queue_in, self.__queue_out)
+            return Response.OK
+        else:
+            # create ZMQ endpoints
+            zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+            # Endpoint with C&C service for receiving commands via a SUB socket
+            self.__subscription_endpoint_with_command_control = zmq_sockets.sub_socket()
+            # connect with endpoint (PUB socket) of C&C service
+            # fetch C&C endpoint <ip:port>
+            command_and_steering_service_endpoint = self.__get_command_control_endpoint()
+            # subscribe to topic
+            zmq_sockets.subscribe_to_topic(
+                self.__subscription_endpoint_with_command_control,
+                PUBLISHING_TOPIC.STEERING.value)
+            # connect to receive broadcast
+            self.__subscription_endpoint_with_command_control.connect(
+                "tcp://"  # protocol
+                f"{command_and_steering_service_endpoint.IP}:"  # ip
+                f"{command_and_steering_service_endpoint.port}"  # port
+                )
+            self.__logger.info("C&C channel - connected with C&C at "
+                               f"{command_and_steering_service_endpoint.IP}:"
+                               f"{command_and_steering_service_endpoint.port} "
+                               "to receive (broadcast) commands")
+
+            # Endpoint with C&C for sending responses via a PUSH socket
+            self.__push_endpoint_with_command_control = zmq_sockets.push_socket()
+            self.__my_ip = networking_utils.my_ip()  # get IP address
+            # bind PUSH socket to first available port in range for sending the
+            # response, and get port bound to PUSH socket to communicate with
+            # C&C service
+            port_to_push_to_command_control =\
+                zmq_sockets.bind_to_first_available_port(
+                    zmq_socket=self.__push_endpoint_with_command_control,
+                    ip=self.__my_ip,
+                    min_port=ports_for_command_control_channel['MIN'],
+                    max_port=ports_for_command_control_channel['MAX'],
+                    max_tries=ports_for_command_control_channel['MAX_TRIES']
+                )
+
+            # check if port could not be bound
+            if port_to_push_to_command_control is Response.ERROR:
+                # NOTE the relevant exception with traceback is already logged
+                # by callee function
+                self.__logger.error("port with Command&Control could not be "
+                                    "bound")
+                # return with error to terminate
+                return Response.ERROR
+
+            # everything went well, now create endpoints address
+            push_endpoint_with_command_control =\
+                Endpoint(self.__my_ip, port_to_push_to_command_control)
+
+            self.__endpoints_address = {
+                SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL:
+                    push_endpoint_with_command_control}
+
+            return Response.OK
 
     def __set_up_runtime(self):
         """
@@ -110,6 +219,19 @@ class ApplicationCompanion(multiprocessing.Process):
             except RuntimeError:
                 # log the exception with traceback
                 self.__logger.exception("Affinity could not be set.")
+        
+        # 1. setup communication endpoints with Orchestrator and Application
+        # Companions
+        if self.__setup_command_control_channel(self.__port_range) == Response.ERROR:
+            try:
+                # raise an exception
+                raise RuntimeError
+            except RuntimeError:
+                # log the exception with traceback
+                self.__logger.exception('Failed to create endpoints. '
+                                        'Quitting!')
+            # terminate with ERROR
+            return Response.ERROR
 
         # 2. register with registry
         if (
@@ -117,10 +239,7 @@ class ApplicationCompanion(multiprocessing.Process):
                 os.getpid(),  # id
                 self.__actions["action"],  # name
                 SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION,  # category
-                (
-                    self.__application_companion_in_queue,  # endpoint
-                    self.__application_companion_out_queue,
-                ),
+                self.__endpoints_address,  # endpoint
                 SERVICE_COMPONENT_STATUS.UP,  # current status
                 # current state
                 STATES.READY
@@ -154,7 +273,26 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__communicator = CommunicatorQueue(
             self._log_settings, self._configurations_manager
         )
+
+        # 5. initialize the Communicator object for communication via ZMQ
+        self.__communicator_zmq = CommunicatorZMQ(
+            self._log_settings, self._configurations_manager
+        )
         return Response.OK
+
+    def __setup_communicator(self):
+        """
+        helper function to set up a generic communicator to encapsulate the
+        underlying tech going to be used for communication.
+        """
+        if self.__port_range is None:  # communicate via shared queues
+            self.__communicator = CommunicatorQueue(
+                self._log_settings,
+                self._configurations_manager)
+        else:  # communicate via 0MQs
+            self.__communicator = CommunicatorZMQ(
+                self._log_settings,
+                self._configurations_manager)
 
     def __respond_with_state_update_error(self):
         """
@@ -169,9 +307,10 @@ class ApplicationCompanion(multiprocessing.Process):
             # log the exception with traceback details
             self.__logger.exception("Could not update state. Quitting!")
         # inform Orchestrator about state update failure
-        self.__send_response_to_orchestrator(
-            EVENT.STATE_UPDATE_FATAL,
-            self.__application_companion_out_queue)
+        # self.__send_response_to_orchestrator(
+        #     EVENT.STATE_UPDATE_FATAL,
+        #     self.__application_companion_out_queue)
+        self.__send_response_to_orchestrator(EVENT.STATE_UPDATE_FATAL)
         # terminate with error
         return Response.ERROR
 
@@ -209,9 +348,10 @@ class ApplicationCompanion(multiprocessing.Process):
             return code as int
         """
         self.__logger.debug(f"sending {response} to orchestrator.")
-        return self.__communicator.send(
-            response, self.__application_companion_out_queue
-        )
+        # return self.__communicator.send(
+        #     response, self.__application_companion_out_queue
+        # )
+        return self.__communicator_zmq.send(response, self.__push_endpoint_with_command_control)
 
     def __receive_response_from_application_manager(self):
         response = self.__communicator.receive(
@@ -236,8 +376,8 @@ class ApplicationCompanion(multiprocessing.Process):
             # Case a. something went wrong during execution of the command
             # NOTE a relevant exception is already logged with traceback by
             # Application Manager
-            self.__logger.info("Error received while executing command: "
-                               f"{steering_command.name}")
+            self.__logger.error("Error received while executing command: "
+                                f"{steering_command.name}")
             # terminate with ERROR
             return Response.ERROR
 
@@ -251,7 +391,7 @@ class ApplicationCompanion(multiprocessing.Process):
         # send START command to Application Manager
         self.__communicator.send(command,
                                  self.__application_manager_in_queue)
-    
+
     def __execute_init_command(self):
         """helper function to execute INIT steering command"""
         self.__logger.info("Executing INIT command!")
@@ -284,7 +424,7 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__logger.debug("starting application Manager.")
         self.__application_manager.start()
         # send INIT command to Application Manager
-        steering_command =  SteeringCommands.INIT
+        steering_command = SteeringCommands.INIT
         self.__send_command_to_application_manager(steering_command)
 
         # 4. wait until a response is received from Application Manager after
@@ -339,7 +479,7 @@ class ApplicationCompanion(multiprocessing.Process):
         # command execution
         response = self.__communicator.receive(
                         self.__application_manager_out_queue)
-        self.__logger.info(f"response from Application Manager {response}")
+        self.__logger.debug(f"response from Application Manager {response}")
         # TODO check for response and act accordingly
 
         # 4. send response to orchestrator
@@ -365,6 +505,14 @@ class ApplicationCompanion(multiprocessing.Process):
         # when return with ERROR
         return Response.ERROR
 
+    def __receive_broadcast(self):
+        """receives and returns the broadcasted message"""
+        # broadcast is received as a multipart message
+        # i.e. [subscription topic, steering command]
+        topic, command = self.__subscription_endpoint_with_command_control.recv_multipart()
+        # return the de-serialized command
+        return pickle.loads(command)
+
     def __fetch_and_execute_steering_commands(self):
         """
         Main loop to fetch and execute the steering commands.
@@ -384,10 +532,10 @@ class ApplicationCompanion(multiprocessing.Process):
         # loop for executing and fetching the steering commands
         while True:
             # 1. fetch the Steering Command
-            current_steering_command = self.__communicator.receive(
-                self.__application_companion_in_queue
-            )
-            self.__logger.debug(f"got the command {current_steering_command}")
+            self.__logger.debug("waiting for steering command")
+            # receive steering command from broadcast
+            current_steering_command = self.__receive_broadcast()
+            self.__logger.debug(f"got the command {current_steering_command.name}")
             # 2. execute the current steering command
             if command_execution_choices[current_steering_command]() ==\
                     Response.ERROR:
@@ -407,7 +555,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
             # 3 (a). If END command is executed, finish execution as normal
             if current_steering_command == SteeringCommands.END:
-                self.__logger.info("Concluding execution.")
+                self.__logger.info("Concluding Application Companion")
                 # finish execution as normal
                 return Response.OK
 

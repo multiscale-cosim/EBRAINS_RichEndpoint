@@ -13,8 +13,11 @@
 # ------------------------------------------------------------------------------
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
+from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
 from EBRAINS_RichEndpoint.steering.steering_menu_handler import SteeringMenuCLIHandler
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 
 
 class POCSteeringMenu:
@@ -22,7 +25,8 @@ class POCSteeringMenu:
     def __init__(self, log_settings,
                  configurations_manager,
                  orchestrator_in_queue,
-                 orchestrator_out_queue):
+                 orchestrator_out_queue,
+                 communicate_via_zmqs = False):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -31,11 +35,35 @@ class POCSteeringMenu:
         self.__steering_commands_history = []
         self.__current_legitimate_choice = 0
         self.__steering_menu_handler = SteeringMenuCLIHandler()
-        self.__communicator = CommunicatorQueue(log_settings,
-                                                configurations_manager)
-        self.__orchestrator_in_queue = orchestrator_in_queue
-        self.__orchestrator_out_queue = orchestrator_out_queue
+        
+        if communicate_via_zmqs:  # communicate via 0MQs
+            self.__communicator = CommunicatorZMQ(log_settings,
+                                                  configurations_manager)
+            self.__setup_channel_with_orchestrator(orchestrator_in_queue)
+            self.__orchestrator_in_queue = self.__orchestrator_out_queue = self.__endpoint_with_orchestrator
+        
+        else:  # communicate via shared queues
+            self.__communicator = CommunicatorQueue(log_settings,
+                                                    configurations_manager)
+            self.__orchestrator_in_queue = orchestrator_in_queue
+            self.__orchestrator_out_queue = orchestrator_out_queue
+       
         self.__logger.debug('initialized.')
+
+    def __setup_channel_with_orchestrator(self, address):
+        # create ZMQ endpoint
+        self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+        # Endpoint with C&C service for sending commands via a REQ socket
+        self.__endpoint_with_orchestrator = self.__zmq_sockets.req_socket()
+        # connect with endpoint (REP socket) of Orchestrator
+        self.__endpoint_with_orchestrator.connect(
+            f"tcp://"  # protocol
+            f"{address.IP}:"  # ip
+            f"{address.port}"  # port
+            )
+        self.__logger.info("C&C channel - connected with Orchestrator to send "
+                           f"commands at {address.IP}:{address.port}")
+        return Response.OK
 
     def __get_steering_menu_item(self, command):
         """
@@ -57,19 +85,6 @@ class POCSteeringMenu:
         else:
             return None
 
-    def __get_responses(self):
-        '''
-        helper function for receiving the responses from Orchestrator
-        '''
-        try:
-            self.__logger.debug('getting response from Orchestrator.')
-            return self.__communicator.receive(
-                    self.__orchestrator_out_queue)
-        except Exception:
-            # Log the exception with Traceback details
-            self.__logger.exception('exception while getting response.')
-            return Response.ERROR
-
     def __validate_steering_command(self, command):
         '''validates the steering command before sending to Orchestrator.'''
         self.__logger.debug(
@@ -81,7 +96,7 @@ class POCSteeringMenu:
     def send_steering_command_to_orchestrator(self, command):
         '''helper function to send the steering command to Orchestrator.'''
         self.__logger.debug(f'sending: {command} to Orchestrator.')
-        self.__orchestrator_in_queue.put(command)
+        self.__communicator.send(command, self.__orchestrator_in_queue)
 
     def __execute_if_validated(self, user_choice):
         '''
@@ -90,11 +105,11 @@ class POCSteeringMenu:
         NOTE this is a client side validation, so nothing to do with the
         state machine valid states and rules.
         '''
-        # 1. check if the user chouice is a not valid menu choice
+        # 1. check if the user choice is a not valid menu choice
         # e.g. it does not exist in steering menu
         if not self.__validate_steering_command(user_choice):
             # Case a. user choice is not a valid choice
-            return Response.ERROR
+            return Response.NOT_VALID_COMMAND
 
         # Case b. user choice is a valid choice
         # 2. send the steering command to Orchestrator
@@ -105,9 +120,41 @@ class POCSteeringMenu:
             self.__get_steering_menu_item(user_choice))
 
         # 4. get response from Orchestrator
-        self.__logger.debug(f'response from Orchestrator: '
-                            f'{self.__get_responses()}')
-        return Response.OK
+        response = self.__get_responses()
+
+        # 5. parse and return the response
+        return self.__parse_response(response)
+    
+    def __get_responses(self):
+        '''
+        helper function for receiving the responses from Orchestrator
+        '''
+        try:
+            self.__logger.debug('getting response from Orchestrator.')
+            return self.__communicator.receive(self.__orchestrator_out_queue)
+        except Exception:
+            # Log the exception with Traceback details
+            self.__logger.exception('exception while getting response.')
+            return Response.ERROR
+
+    def __parse_response(self, response):
+        self.__logger.debug(f'response from orchestrator: {response}')
+        if response == Response.ERROR or response == EVENT.FATAL:
+            # terminate with error
+            return self.__terminate_with_error('Error executing command. '
+                                               'Quitting!')
+        else:
+            return response
+    
+    def __terminate_with_error(self, error_message):
+        try:
+            # raise run time error exception
+            raise RuntimeError
+        except RuntimeError:
+            # log the exception with traceback
+            self.__logger.exception(error_message)
+        # terminate with error
+        return Response.ERROR
     
     def start_steering(self):
         '''
@@ -134,15 +181,9 @@ class POCSteeringMenu:
         response = self.__get_responses()
         self.__logger.debug(f'response from orchestrator: {response}')
         if response == Response.ERROR:
-            # Case, INIT execution fails
-            try:
-                # raise run time error exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('Could not execute INIT. Quiting!')
             # terminate with error
-            return Response.ERROR
+            return self.__terminate_with_error('Error executing INIT command. '
+                                               'Quitting!')
 
         # Case, INIT is done successfully
         user_choice = 0
@@ -168,8 +209,10 @@ class POCSteeringMenu:
 
             # Otherwise, execute the steering command if it is a valid
             # menu choice
-            if self.__execute_if_validated(user_choice) == Response.ERROR:
+            response = self.__execute_if_validated(user_choice)
+            if response == Response.NOT_VALID_COMMAND:
                 print('Not a valid choice. The valid choices are: [1-3]')
+                continue
 
         # user opted for 'EXIT', terminate the steering menu
         return Response.OK
