@@ -16,6 +16,8 @@ from EBRAINS_RichEndpoint.Application_Companion.underlying_platform import Platf
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
+# TODO set pid of resource usage file to pid of action i.e. popened process
+# TODO set the name of process with the action name/category
 class AffinityManager:
     """
     Facilitates to manipulate with the affinity mask for a process.

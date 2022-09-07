@@ -661,7 +661,7 @@ class ApplicationManager(multiprocessing.Process):
             )
             self.__logger.debug(f"got the command {current_steering_command}")
             # 2. execute the current steering command
-            if command_execution_choices[current_steering_command]() == \
+            if command_execution_choices[current_steering_command]() ==\
                     Response.ERROR:
                 # something went wrong, terminate with error
                 # NOTE a relevant exception is already logged with traceback

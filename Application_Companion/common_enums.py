@@ -32,6 +32,7 @@ class Response(enum.IntEnum):
     OK = 0
     ERROR = -100
     ERROR_READING_FILE = -170
+    NOT_VALID_COMMAND = -200
 
 
 @enum.unique
@@ -64,3 +65,10 @@ class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
     """ Enum class for integrated applications (simulators)"""
     PID = 0
     LOCAL_MINIMUM_STEP_SIZE = 1
+
+
+@enum.unique
+class PUBLISHING_TOPIC(enum.Enum):
+    """ Enum class for integrated applications (simulators)"""
+    # NOTE ZMQ set socket options i.e. setsockopt() requires the topic to be in bytes
+    STEERING = b'steering'

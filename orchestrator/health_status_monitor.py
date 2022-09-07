@@ -143,9 +143,15 @@ class HealthStatusMonitor:
                     f'{self.__health_registry_manager_proxy.current_global_state()}')
 
             # everything is fine i.e. all local states are same, all statuses
-            # are 'UP' and global state is up-to-date
-            # now, reset the counter to rule out network delay
-            counter = self.__counter
+            # are 'UP' and global state is up-to-date now, reset the counter
+            # to rule out network delay
+            if counter < self.__counter:
+                self.__logger.debug(f"counter before reset:{counter}")
+                counter = self.__counter
+                self.__logger.debug(f"counter after reset:{counter}")
+                self.__logger.info("The states are consistent and "
+                                   "the system is healthy now!")
+
             # sleep until next poll
             time.sleep(self.__network_delay)
             # keep monitoring
