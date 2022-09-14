@@ -505,6 +505,24 @@ class ApplicationManager(multiprocessing.Process):
         2. Receives the local step size from the simulator and sends it to the
         Orchestrator via Application Companion.
         """
+        # TODO Launch applications
+        # if it is InterscaleHub
+        # else keep waiting (if it is simulators) until the connection
+        # details of InterscaleHubs are registered with registry
+
+        # TODO if it is InterscaleHub,
+        # Launch it
+        # i. get connection details from the output stream of application
+        # which is in the following format: {'PID': <int>, 'MPI_CONNECTION_INFO': <string>}
+        # ii. register it with Registry Service
+        # ii. Continue with normal flow,send response to Orchestrator, etc.
+
+        # TODO if it is Simulator,
+        # i. look-up loop until fetches connection details of InterscaleHub
+        # from Registry Service
+        # ii. Launch Application along with this connection info
+        # Continue with normal flow, i.e. look for response i.e. <PID, local_minimum_step_size>
+
         # 1. Launch application
         if self.__launch_application(self.__application) == Response.ERROR:
             # Case a, could not launch the application
