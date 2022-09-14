@@ -15,6 +15,7 @@ import multiprocessing
 import os
 import signal
 import pickle
+import time
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
@@ -392,6 +393,23 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__communicator.send(command,
                                  self.__application_manager_in_queue)
 
+    def __get_interscalehub_endpoints(self):
+        """
+        returns the InterscaleHub proxy after fetching it from Registry Service
+        """
+        interscalehub_proxy_list = []
+        while not interscalehub_proxy_list:
+            # wait until it gets InterscaleHub proxy from Registry
+            self.__logger.info("__DEBUG__ waiting for InterscaleHub"
+                               " connection details. retry in 1 sec")
+            time.sleep(1)
+            interscalehub_proxy_list =\
+                self.__health_registry_manager_proxy.find_all_by_category(
+                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB)
+
+        # return the proxy
+        return interscalehub_proxy_list
+
     def __execute_init_command(self):
         """helper function to execute INIT steering command"""
         self.__logger.info("Executing INIT command!")
@@ -401,6 +419,22 @@ class ApplicationCompanion(multiprocessing.Process):
             # terminate loudly as state could not be updated
             # exception is already logged with traceback
             return self.__respond_with_state_update_error()
+
+
+        # 2. proceed only if the action is InterscaleHub, otherwise wait until
+        # the InterscaleHub registers its connections details
+        #  fetch the action id
+        actions_id = None
+        try:
+            actions_id = self.__actions.get('action-id')
+        except KeyError:
+            # 'action-id' could not be found in 'actions' dictionary
+            # log the exception with traceback
+            self.__logger.exception("'action-id' is not a valid key.")
+            return Response.ERROR
+
+        if actions_id == 'action_004' or actions_id == 'action_010':  # TODO will be updated with the actions_type from XML
+            interscalehub_proxy_list = self.__get_interscalehub_endpoints()
 
         # 2. initialize Application Manager
         self.__application_manager = ApplicationManager(
@@ -415,6 +449,8 @@ class ApplicationCompanion(multiprocessing.Process):
             # proxy to shared queue to receive responses from
             # Application Manager
             self.__application_manager_out_queue,
+            # proxy to Health & Registry Manager
+            self.__health_registry_manager_proxy,
             # flag to enable/disable resource usage monitoring
             # TODO set monitoring enable/disable settings from XML
             enable_resource_usage_monitoring=True,
@@ -429,9 +465,33 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 4. wait until a response is received from Application Manager after
         # command execution
-        # NOTE PID and the local minimum stepsize of the application is
-        # received as a response to successful execution of INIT command
+
+        # NOTE if action type is SIMULATOR then response is PID and the local
+        # minimum step-size, Otherwise the response is PID and connection
+        # endpoint details if it is INTERSCALE_HUB
         response = self.__receive_response_from_application_manager()
+
+        # if action type is INTERSCALEHUB then register the connection details
+        # with registry
+        if actions_id == 'action_006' or actions_id == 'action_008':  # TODO will be updated with the actions_type
+            # register endpoint with registry service
+             # 2. register with registry
+            if self.__health_registry_manager_proxy.register(
+                    response["PID"],  # id
+                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # name
+                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
+                    response["MPI_CONNECTION_INFO"],  # endpoint
+                    None,  # current status
+                    # current state
+                    None
+                ) == Response.ERROR:
+                self.__logger.info("__DEBUG__ Could not registered INTERSCALEHUB endpoints")
+                return Response.ERROR
+            else:
+                self.__logger.info("__DEBUG__ INTERSCALEHUB endpoints are registered")
+                # InterscaleHubs do not have minimum stepsize, so send empty
+                # dictionary as a response to Orchestrator
+                response = {}
 
         # 5. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
