@@ -393,7 +393,7 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__communicator.send(command,
                                  self.__application_manager_in_queue)
 
-    def __get_interscalehub_endpoints(self):
+    def __get_interscalehub_proxy_list(self):
         """
         returns the InterscaleHub proxy after fetching it from Registry Service
         """
@@ -420,7 +420,6 @@ class ApplicationCompanion(multiprocessing.Process):
             # exception is already logged with traceback
             return self.__respond_with_state_update_error()
 
-
         # 2. proceed only if the action is InterscaleHub, otherwise wait until
         # the InterscaleHub registers its connections details
         #  fetch the action id
@@ -433,8 +432,16 @@ class ApplicationCompanion(multiprocessing.Process):
             self.__logger.exception("'action-id' is not a valid key.")
             return Response.ERROR
 
+        # Case a: action type is SIMULATOR
+        # fetch InterscaleHub MPI endpoint connection details
         if actions_id == 'action_004' or actions_id == 'action_010':  # TODO will be updated with the actions_type from XML
-            interscalehub_proxy_list = self.__get_interscalehub_endpoints()
+            interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
+            interscalehub_mpi_endpoints = [interscalehub_proxy.endpoint
+                                           for interscalehub_proxy in
+                                           interscalehub_proxy_list]
+            # append interscale_hub mpi endpoint connection details with
+            # actions as parameters
+            self.__actions.append(interscalehub_mpi_endpoints)
 
         # 2. initialize Application Manager
         self.__application_manager = ApplicationManager(
