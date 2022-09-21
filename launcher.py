@@ -31,13 +31,17 @@ class Launcher:
 
     def __init__(self, log_settings, configurations_manager,
                  proxy_manager_server_address=None,
-                 ports_for_command_control_channel=None):
+                 communication_settings_dict=None):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
+
+        # to be used for ZMQ (or another communication framework/library)
+        self.__communication_settings_dict = communication_settings_dict
+
         self.__logger = self._configurations_manager.load_log_configurations(
-                                        name=__name__,
-                                        log_configurations=self._log_settings)
-        
+            name=__name__,
+            log_configurations=self._log_settings)
+
         # set Proxy Manager Server connection details
         self.__proxy_manager_connection_details = {}
         self.__set_up_proxy_manager_connection_details(proxy_manager_server_address)
@@ -64,28 +68,36 @@ class Launcher:
         # Connect with Proxy Manager Server
         # NOTE: it terminates with RuntimeError if connection could ne be made
         # for whatever reasons
+
         self._proxy_manager_client.connect(
             self.__proxy_manager_connection_details["IP"],
             self.__proxy_manager_connection_details["PORT"],
             self.__proxy_manager_connection_details["KEY"])
 
         # Now, get the proxy to registry manager
-        self.__component_service_registry_manager =\
+        self.__component_service_registry_manager = \
             self._proxy_manager_client.get_registry_proxy()
 
         # Latency = Propagation Time + Transmission Time + Queuing Time + Processing Delay
         self.__latency = None  # NOTE must be determine runtime
 
-        # set port range for components
-        # NOTE initializing with hardcoded range from utils
-        self.__ports_for_command_control_channel = networking_utils.default_range_of_ports
-        # self.__ports_for_command_control_channel = ports_for_command_control_channel
+        # setting port range for components
+        # print(f'__debug__,__communication_settings_dict={self.__communication_settings_dict}')
+        if self.__communication_settings_dict is not None:
+            # values were gotten from XML configuration file
+            self.__ports_for_command_control_channel = self.__communication_settings_dict
+        else:
+            # NOTE initializing with hardcoded range from utils
+            self.__ports_for_command_control_channel = networking_utils.default_range_of_ports
+        # print(f'__debug__,networking_utils.default_range_of_ports={networking_utils.default_range_of_ports}')
+        # print(f'__debug__,__ports_for_command_control_channel={self.__ports_for_command_control_channel}')
 
         # if Command&Control channel is going to be established between multiple nodes
         if self.__ports_for_command_control_channel is not None:
             self.__port_range_for_orchestrator = self.__ports_for_command_control_channel["ORCHESTRATOR"]
             self.__port_range_for_command_control = self.__ports_for_command_control_channel["COMMAND_CONTROL"]
-            self.__port_range_for_application_companions = self.__ports_for_command_control_channel["APPLICATION_COMPANION"]
+            self.__port_range_for_application_companions = self.__ports_for_command_control_channel[
+                "APPLICATION_COMPANION"]
 
         self.__logger.debug("initialized.")
 
@@ -96,9 +108,9 @@ class Launcher:
         """
         if proxy_manager_server_address is None:
             self.__proxy_manager_connection_details = {
-                    "IP": proxy_manager_server_utils.IP,
-                    "PORT": proxy_manager_server_utils.PORT,
-                    "KEY": proxy_manager_server_utils.KEY}
+                "IP": proxy_manager_server_utils.IP,
+                "PORT": proxy_manager_server_utils.PORT,
+                "KEY": proxy_manager_server_utils.KEY}
         else:
             self.__proxy_manager_connection_details = proxy_manager_server_address
 
@@ -114,7 +126,7 @@ class Launcher:
         component = None
         while time.time() <= timeout:
             if component_service.is_registered_in_registry.is_set():
-                component = self.__component_service_registry_manager.\
+                component = self.__component_service_registry_manager. \
                     find_all_by_category(component_service_name)
                 self.__logger.debug(f'{component} is found.')
                 break
@@ -166,16 +178,16 @@ class Launcher:
         # 1. launch Command&Control service
         self.__logger.info('setting up Command and Control service.')
         steering_service = CommandControlService(
-                                    self._log_settings,
-                                    self._configurations_manager,
-                                    self.__proxy_manager_connection_details,
-                                    self.__port_range_for_command_control)
+            self._log_settings,
+            self._configurations_manager,
+            self.__proxy_manager_connection_details,
+            self.__port_range_for_command_control)
         steering_service.start()
 
         # check if Command&Control is already registered with registry
         if self.__get_proxy_to_registered_component(
-                    steering_service,
-                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
+                steering_service,
+                SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
             # log exception with traceback and terminate with error
             self.__log_exception_and_terminate_with_error(
                 'Command&Control service is not yet registered')
@@ -184,11 +196,11 @@ class Launcher:
         application_companions = []
         for action in actions:
             application_companions.append(ApplicationCompanion(
-                                    self._log_settings,
-                                    self._configurations_manager,
-                                    action,
-                                    self.__proxy_manager_connection_details,
-                                    self.__port_range_for_application_companions))
+                self._log_settings,
+                self._configurations_manager,
+                action,
+                self.__proxy_manager_connection_details,
+                self.__port_range_for_application_companions))
 
         for application_companion in application_companions:
             self.__logger.info('setting up Application Companion.')
@@ -214,8 +226,8 @@ class Launcher:
         orchestrator.start()
         # check if Orchestrator is already registered with registry
         orchestrator_component = self.__get_proxy_to_registered_component(
-                                    orchestrator,
-                                    SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
+            orchestrator,
+            SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
         # Case a: Orchestrator is not yet registered
         if orchestrator_component is None:
             # terminate Command and Control service
@@ -224,17 +236,17 @@ class Launcher:
             self.__terminate_application_companions(application_companions)
             # log exception with traceback and terminate with error
             self.__log_exception_and_terminate_with_error(
-                    'Orchestrator is not yet registered')
+                'Orchestrator is not yet registered')
 
         # Case b: Orchestrator is already registered
         # get orchestrator endpoints for communication
         if self.__ports_for_command_control_channel is None:
-            orchestrator_in_queue_proxy =\
+            orchestrator_in_queue_proxy = \
                 orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
-            orchestrator_out_queue_proxy =\
+            orchestrator_out_queue_proxy = \
                 orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL]
         else:
-            orchestrator_in_queue_proxy = orchestrator_out_queue_proxy =\
+            orchestrator_in_queue_proxy = orchestrator_out_queue_proxy = \
                 orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
 
         # 4. launch the Steering Menu Handler
