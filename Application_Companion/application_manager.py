@@ -11,6 +11,7 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
+import json
 import multiprocessing
 import os
 import subprocess
@@ -95,8 +96,8 @@ class ApplicationManager(multiprocessing.Process):
         self.__resource_usage_monitor = None
         self.__exit_status = None
         self.__local_minimum_step_size = {}
-        self.__interscalehub_endpoint = {}
-        self.__response_from_action = {}
+        self.__interscalehub_endpoints = []
+        self.__response_from_action = []
         self.__action_pid = None
 
         self.__logger.debug("Application Manager is initialized.")
@@ -294,7 +295,12 @@ class ApplicationManager(multiprocessing.Process):
         """
         # STEP 1. find the index of local minimum step size information in the
         # output received from application
-        index = lines.find(first_key)
+        # index = lines.find(first_key)
+
+        # All occurrences of substring in string 
+        import re
+        starting_at = [i.start() for i in re.finditer(first_key, lines)]
+        ending_at = [i.start() for i in re.finditer('}', lines)]
 
         # STEP 2. covert string to dictionary
 
@@ -302,14 +308,23 @@ class ApplicationManager(multiprocessing.Process):
         # response of INIT command
         # For now, it is received via (stdin) PIPE as a string in the
         # following format if it is a SIMULATOR:
+        
         # {'PID': '<pid>', 'LOCAL_MINIMUM_STEP_SIZE': '0.05'}
-        # otherwise if it is an INTERSCALE_HUB:
+        
+        # otherwise, if it is an INTERSCALE_HUB:
+        
         # {'PID': '<pid>', 'MPI_CONNECTION_INFO': <string>}
+        
         # so the index of curly bracket {'PID'... is index-2, which is needed
         # to convert it into dictionary.
         try:
-            self.__response_from_action = ast.literal_eval(lines[index - 2:])
-            self.__action_pid = self.__response_from_action["PID"]
+            for running_index, starts_at in enumerate(starting_at):
+                interscalehub_endpoint = ast.literal_eval(
+                    lines[starts_at - 2:ending_at[running_index]+1])
+                self.__logger.info(f"__DEBUG__ running dictionary: {interscalehub_endpoint}")
+                self.__response_from_action.append(interscalehub_endpoint)
+                self.__action_pid = interscalehub_endpoint["PID"]  # TODO make a list of action subprocesses PIDs
+            self.__logger.info(f"__DEBUG__ responses: {self.__response_from_action}")
             return Response.OK
         except Exception:
             # Could not convert string into dict
@@ -395,7 +410,7 @@ class ApplicationManager(multiprocessing.Process):
                             # logged
                             self.__stop_preemptory()
                             return Response.ERROR
-
+                        
                         # Case b. All information (received as a response to
                         # INIT command) is read from PIPES, now execute other
                         # steering commands
@@ -412,7 +427,7 @@ class ApplicationManager(multiprocessing.Process):
                             # logged
                             self.__stop_preemptory()
                             return Response.ERROR
-
+                    
                         # Case b. All Output from INTERSCALEHUB (as a response
                         # to INIT command) is read from PIPES, now execute
                         # other steering commands

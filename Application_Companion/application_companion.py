@@ -16,6 +16,7 @@ import os
 import signal
 import pickle
 import time
+import base64
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
@@ -398,7 +399,7 @@ class ApplicationCompanion(multiprocessing.Process):
         returns the InterscaleHub proxy after fetching it from Registry Service
         """
         interscalehub_proxy_list = []
-        while not interscalehub_proxy_list:
+        while len(interscalehub_proxy_list) < 2:  # TODO replace with number of interscalehub actions
             # wait until it gets InterscaleHub proxy from Registry
             self.__logger.info("__DEBUG__ waiting for InterscaleHub"
                                " connection details. retry in 1 sec")
@@ -433,7 +434,7 @@ class ApplicationCompanion(multiprocessing.Process):
             return Response.ERROR
 
         # Case a: action type is SIMULATOR
-        # fetch InterscaleHub MPI endpoint connection details
+        # fetch and append InterscaleHub MPI endpoint connection details
         if actions_id == 'action_004' or actions_id == 'action_010':  # TODO will be updated with the actions_type from XML
             interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
             interscalehub_mpi_endpoints = [interscalehub_proxy.endpoint
@@ -441,7 +442,10 @@ class ApplicationCompanion(multiprocessing.Process):
                                            interscalehub_proxy_list]
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
-            self.__actions.append(interscalehub_mpi_endpoints)
+            action_with_parameters = self.__actions['action']
+            action_with_parameters.append(base64.b64encode(
+                        pickle.dumps(interscalehub_mpi_endpoints)))
+            self.__actions['action'] = action_with_parameters
 
         # 2. initialize Application Manager
         self.__application_manager = ApplicationManager(
@@ -456,8 +460,6 @@ class ApplicationCompanion(multiprocessing.Process):
             # proxy to shared queue to receive responses from
             # Application Manager
             self.__application_manager_out_queue,
-            # proxy to Health & Registry Manager
-            self.__health_registry_manager_proxy,
             # flag to enable/disable resource usage monitoring
             # TODO set monitoring enable/disable settings from XML
             enable_resource_usage_monitoring=True,
@@ -482,17 +484,24 @@ class ApplicationCompanion(multiprocessing.Process):
         # with registry
         if actions_id == 'action_006' or actions_id == 'action_008':  # TODO will be updated with the actions_type
             # register endpoint with registry service
-             # 2. register with registry
+            # 2. register with registry
+            end_points = [endpoint.get("MPI_CONNECTION_INFO")
+                          for endpoint in response]
+            pid = response[0]["PID"]
+            self.__logger.info(f"__DEBUG__ endpoints: {end_points}")
+            self.__logger.info("__DEBUG__ registering INTERSCALEHUB endpoints")
             if self.__health_registry_manager_proxy.register(
-                    response["PID"],  # id
+                    # response["PID"],  # id
+                    pid,  # id
                     SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # name
                     SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
-                    response["MPI_CONNECTION_INFO"],  # endpoint
-                    None,  # current status
+                    # response["MPI_CONNECTION_INFO"],  # endpoint
+                    end_points,  # endpoint
+                    SERVICE_COMPONENT_STATUS.UP,  # current status
                     # current state
                     None
-                ) == Response.ERROR:
-                self.__logger.info("__DEBUG__ Could not registered INTERSCALEHUB endpoints")
+                    ) == Response.ERROR:
+                self.__logger.error("__DEBUG__ Could not registered INTERSCALEHUB endpoints")
                 return Response.ERROR
             else:
                 self.__logger.info("__DEBUG__ INTERSCALEHUB endpoints are registered")

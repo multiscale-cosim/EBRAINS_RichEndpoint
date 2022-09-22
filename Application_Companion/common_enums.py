@@ -66,6 +66,7 @@ class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
     PID = 0
     LOCAL_MINIMUM_STEP_SIZE = 1
 
+
 @enum.unique
 class INTEGRATED_INTERSCALEHUB_APPLICATION(enum.IntEnum):
     """ Enum class for integrated applications (InterscaleHub)"""
