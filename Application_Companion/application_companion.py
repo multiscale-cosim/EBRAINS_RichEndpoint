@@ -17,10 +17,13 @@ import signal
 import pickle
 import time
 import base64
+from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, PUBLISHING_TOPIC
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import PUBLISHING_TOPIC
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_INTERSCALEHUB_APPLICATION as INTERSCALE_HUB
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
@@ -94,6 +97,7 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__endpoints_address = None
         self.__ac_registered_component_service = None
         self.__application_manager = None
+        self.__action_pids = []
         self.__logger.debug("Application Companion is initialized")
 
     @property
@@ -399,7 +403,8 @@ class ApplicationCompanion(multiprocessing.Process):
         returns the InterscaleHub proxy after fetching it from Registry Service
         """
         interscalehub_proxy_list = []
-        while len(interscalehub_proxy_list) < 2:  # TODO replace with number of interscalehub actions
+        total_interscaleHubs = 4  # TODO replace with number of interscalehubs mpi processes
+        while len(interscalehub_proxy_list) < total_interscaleHubs:
             # wait until it gets InterscaleHub proxy from Registry
             self.__logger.info("__DEBUG__ waiting for InterscaleHub"
                                " connection details. retry in 1 sec")
@@ -411,6 +416,58 @@ class ApplicationCompanion(multiprocessing.Process):
         # return the proxy
         return interscalehub_proxy_list
 
+    def __get_endpoints_as_per_simulator(self, endpoints, direction,
+                                         intercomm_type):
+        """
+        helper function to fetch the IntersclaeHub endpoints according to
+        simulator e.g. NEST_TO_TVB InterscaleHub endpoint for NEST simulator is
+        where the former receives data.
+        """
+        for endpoint in endpoints:
+            if endpoint[INTERSCALE_HUB.DATA_EXCHANGE_DIRECTION.name] == direction and\
+                endpoint[INTERSCALE_HUB.INTERCOMM_TYPE.name] == intercomm_type:
+                return endpoint
+        
+        # return None if no matching endpoint is found
+        return None    
+
+    def __get_endpoints(self, simulator):
+        """returns MPI endpoints of InterscaleHubs according to Simulator"""
+        intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
+        interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_TVB.name,
+                          DATA_EXCHANGE_DIRECTION.TVB_TO_NEST.name]
+        if simulator == "TVB":
+            intercomms.reverse()
+        # get proxies to interscalehubs
+        interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
+        # get list of interscalehub endpoints        
+        interscalehub_endpoints_list = [interscalehub_proxy.endpoint
+                                       for interscalehub_proxy in
+                                       interscalehub_proxy_list]
+
+        # get endpoints list as per simulator
+        endpoints = []
+        for index, intercomm in enumerate(intercomms):
+            endpoint = self.__get_endpoints_as_per_simulator(
+                interscalehub_endpoints_list,
+                interscaleHubs[index],
+                intercomm)
+            # terminate with error if endpoint could not be found
+            if endpoint is None:
+                self.__logger.critical("could not found endpoints, "
+                                       f"simulator: {simulator}, "
+                                       f"InterscaleHub:{interscaleHubs[index]}"
+                                       f", intercomm: {intercomm}")
+                self.__terminate_with_error()
+
+            # else, append endpoint to list
+            endpoints.append(endpoint)
+            # remove the found one endpoint to reduce the search space
+            # interscalehub_endpoints_list.remove(endpoint)
+
+        self.__logger.info(f"__DEBUG__ simulator: {simulator}, InterscaleHub endpoints: {endpoints}")
+        return endpoints
+    
     def __execute_init_command(self):
         """helper function to execute INIT steering command"""
         self.__logger.info("Executing INIT command!")
@@ -423,7 +480,7 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 2. proceed only if the action is InterscaleHub, otherwise wait until
         # the InterscaleHub registers its connections details
-        #  fetch the action id
+        # fetch the action id
         actions_id = None
         try:
             actions_id = self.__actions.get('action-id')
@@ -436,10 +493,16 @@ class ApplicationCompanion(multiprocessing.Process):
         # Case a: action type is SIMULATOR
         # fetch and append InterscaleHub MPI endpoint connection details
         if actions_id == 'action_004' or actions_id == 'action_010':  # TODO will be updated with the actions_type from XML
-            interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
-            interscalehub_mpi_endpoints = [interscalehub_proxy.endpoint
-                                           for interscalehub_proxy in
-                                           interscalehub_proxy_list]
+            action_simulator_ids = {'action_004': "NEST", 'action_010':"TVB"}
+
+            # interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
+            # interscalehub_mpi_endpoints = [interscalehub_proxy.endpoint
+            #                                for interscalehub_proxy in
+            #                                interscalehub_proxy_list]
+            
+            # get mpi endpoint connection details
+            interscalehub_mpi_endpoints =\
+                self.__get_endpoints(action_simulator_ids.get(actions_id))
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
             action_with_parameters = self.__actions['action']
@@ -482,33 +545,45 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # if action type is INTERSCALEHUB then register the connection details
         # with registry
-        if actions_id == 'action_006' or actions_id == 'action_008':  # TODO will be updated with the actions_type
+        if actions_id == 'action_006' or actions_id == 'action_008':  # TODO will be updated with the actions_type from XML
             # register endpoint with registry service
             # 2. register with registry
-            end_points = [endpoint.get("MPI_CONNECTION_INFO")
-                          for endpoint in response]
-            pid = response[0]["PID"]
-            self.__logger.info(f"__DEBUG__ endpoints: {end_points}")
-            self.__logger.info("__DEBUG__ registering INTERSCALEHUB endpoints")
-            if self.__health_registry_manager_proxy.register(
-                    # response["PID"],  # id
-                    pid,  # id
-                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # name
-                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
-                    # response["MPI_CONNECTION_INFO"],  # endpoint
-                    end_points,  # endpoint
-                    SERVICE_COMPONENT_STATUS.UP,  # current status
-                    # current state
-                    None
-                    ) == Response.ERROR:
-                self.__logger.error("__DEBUG__ Could not registered INTERSCALEHUB endpoints")
-                return Response.ERROR
-            else:
-                self.__logger.info("__DEBUG__ INTERSCALEHUB endpoints are registered")
-                # InterscaleHubs do not have minimum stepsize, so send empty
-                # dictionary as a response to Orchestrator
-                response = {}
+            # mpi_ports = [mpi_port.get("MPI_CONNECTION_INFO")
+            #               for mpi_port in response]
+            
+            # inter_comm_type = [intercomm.get("INTERCOMM_TYPE")
+            #                    for intercomm in response]
+            
+            # for index, mpi_port in enumerate(mpi_ports):
+            #     endpoints = {INTERSCALE_HUB.INTERCOMM_TYPE: inter_comm_type[index]}
 
+            self.__logger.info("__DEBUG__ registering INTERSCALEHUB endpoints")
+            for endpoint in response:
+                self.__logger.debug(f"running endpoint in response: {endpoint}")
+                pid = endpoint.pop("PID", None)
+                name = endpoint.get("DATA_EXCHANGE_DIRECTION", None)
+                self.__logger.debug(f"running endpoint after pop: {endpoint}, pid: {pid}, name: {name}")
+                self.__action_pids.append(pid)  # TODO send these pids to Application Manager for monitoring
+                if self.__health_registry_manager_proxy.register(
+                        # response["PID"],  # id
+                        pid,  # id
+                        name,  # name
+                        SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
+                        # response["MPI_CONNECTION_INFO"],  # endpoint
+                        endpoint,  # endpoint
+                        SERVICE_COMPONENT_STATUS.UP,  # current status
+                        # current state
+                        None
+                        ) == Response.ERROR:
+                    self.__logger.error("Could not registered INTERSCALEHUB endpoints")
+                    return Response.ERROR
+                else:
+                    self.__logger.debug(f"INTERSCALEHUB endpoint {endpoint} is registered")
+        
+            # InterscaleHubs do not have minimum stepsize, so send empty
+            # dictionary as a response to Orchestrator
+            response = {}
+            
         # 5. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
         return self.__command_execution_response(response, steering_command)

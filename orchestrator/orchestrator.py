@@ -144,7 +144,7 @@ class Orchestrator(multiprocessing.Process):
                                     self.__orchestrator_registered_component,
                                     input_command)
 
-    def __find_global_minimum_step_size(self, step_sizes_with_pids):
+    def __find_global_minimum_step_size(self, responses_from_actions):
         """
         helper function for finding the minimum step size.
 
@@ -159,9 +159,15 @@ class Orchestrator(multiprocessing.Process):
             the minimum step size of the list.
         """
         # extract all step sizes from dictionary
-        for dic in step_sizes_with_pids:
+        step_sizes_with_pids = []
+        for dic in responses_from_actions:
+            self.__logger.info(f"__DEBUG__ running dictionary: {dic}")
             if dic == {}:
-                step_sizes_with_pids.remove(dic)
+                continue
+            else:
+                step_sizes_with_pids.append(dic)
+
+        self.__logger.info(f"__DEBUG__ step_sizes_with_pids: {step_sizes_with_pids}")
         step_sizes = [
             sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name]
             for sub in step_sizes_with_pids]
