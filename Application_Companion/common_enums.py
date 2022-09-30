@@ -96,6 +96,5 @@ class PUBLISHING_TOPIC(enum.Enum):
 @enum.unique
 class MONITOR(enum.Enum):
     """ Enum class for integrated applications (simulators)"""
-
-    PID = 0  # PID of the process being monitored
+    PID_PROCESS_BEING_MONITORED = 0  # PID of the process being monitored
     RESOURCE_USAGE_MONITOR = 1

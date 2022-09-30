@@ -284,7 +284,7 @@ class CommandControlService(multiprocessing.Process):
             responses.append(self.__communicator.receive(
                              self.__pull_endpoint_with_application_companions))                          
         # send responses back to orchestrator via zeromq
-        self.__logger.info(f"received responses: {responses}")
+        self.__logger.debug(f"received responses: {responses}")
         return self.__communicator.send(responses,
                                             self.__rep_endpoint_with_orchestrator)
 

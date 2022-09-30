@@ -11,6 +11,7 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
+from ast import Return
 import multiprocessing
 import os
 import signal
@@ -137,11 +138,11 @@ class ApplicationCompanion(multiprocessing.Process):
         return self.__command_and_control_service[0].endpoint[
             SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION]
 
-    def __setup_command_control_channel(self, ports_for_command_control_channel):
+    def __setup_command_control_channel(self):
         """creates communication endpoints"""
         # if the range of ports are not provided then use the shared queues
         # assuming that it is to be deployed on laptop/single node
-        if ports_for_command_control_channel is None:
+        if self.__port_range is None:
             # proxies to the shared queues
             # for in-coming messages
             self.__queue_in = (
@@ -186,9 +187,9 @@ class ApplicationCompanion(multiprocessing.Process):
                 zmq_sockets.bind_to_first_available_port(
                     zmq_socket=self.__push_endpoint_with_command_control,
                     ip=self.__my_ip,
-                    min_port=ports_for_command_control_channel['MIN'],
-                    max_port=ports_for_command_control_channel['MAX'],
-                    max_tries=ports_for_command_control_channel['MAX_TRIES']
+                    min_port=self.__port_range['MIN'],
+                    max_port=self.__port_range['MAX'],
+                    max_tries=self.__port_range['MAX_TRIES']
                 )
 
             # check if port could not be bound
@@ -228,7 +229,7 @@ class ApplicationCompanion(multiprocessing.Process):
         
         # 1. setup communication endpoints with Orchestrator and Application
         # Companions
-        if self.__setup_command_control_channel(self.__port_range) == Response.ERROR:
+        if self.__setup_command_control_channel() == Response.ERROR:
             try:
                 # raise an exception
                 raise RuntimeError
@@ -275,30 +276,23 @@ class ApplicationCompanion(multiprocessing.Process):
             f"name: {self.__ac_registered_component_service.name}"
         )
 
-        # 5. initialize the Communicator object for communication via Queues
-        self.__communicator = CommunicatorQueue(
-            self._log_settings, self._configurations_manager
-        )
-
-        # 5. initialize the Communicator object for communication via ZMQ
-        self.__communicator_zmq = CommunicatorZMQ(
-            self._log_settings, self._configurations_manager
-        )
+        # 5. setup communicators for Command&Control and Application Manager
+        self.__setup_communicators()
         return Response.OK
 
-    def __setup_communicator(self):
-        """
-        helper function to set up a generic communicator to encapsulate the
-        underlying tech going to be used for communication.
-        """
-        if self.__port_range is None:  # communicate via shared queues
-            self.__communicator = CommunicatorQueue(
-                self._log_settings,
-                self._configurations_manager)
-        else:  # communicate via 0MQs
-            self.__communicator = CommunicatorZMQ(
-                self._log_settings,
-                self._configurations_manager)
+    def __setup_communicators(self):
+        """helper function to set up communicators"""
+        # initialize the Communicator object for communication via Queues with
+        # Application Manager
+        self.__communicator = CommunicatorQueue(
+            self._log_settings,
+            self._configurations_manager)
+    
+        # initialize the Communicator object for communication via ZMQ with
+        # Command&Control service
+        self.__communicator_zmq = CommunicatorZMQ(
+            self._log_settings,
+            self._configurations_manager)
 
     def __respond_with_state_update_error(self):
         """
@@ -360,6 +354,7 @@ class ApplicationCompanion(multiprocessing.Process):
         return self.__communicator_zmq.send(response, self.__push_endpoint_with_command_control)
 
     def __receive_response_from_application_manager(self):
+        '''helper function to receive responses from Application Manager'''
         response = self.__communicator.receive(
                         self.__application_manager_out_queue)
         self.__logger.debug(f"response from Application Manager {response}")
@@ -368,14 +363,18 @@ class ApplicationCompanion(multiprocessing.Process):
     def __command_execution_response(self, response, steering_command):
         '''
         helper function to check the response received from Application Manager
-        as a response. It could be OK, ERROR or a PID and the local minimum
-        stepsize of the simulator.
+        as a response. It could be for example OK, ERROR, the local minimum
+        stepsize of the simulator, or connection endpoint details of
+        InterscaleHubs.
 
         Parameters
         ----------
-
-        response : ...
+        response : Any
             response received from the Application Manager.
+
+        steering_command: STEERING_COMMAND.Enum
+            currently executing steering command to which the response is
+            received
         '''
         # Check response received from Application Manager
         if response == Response.ERROR:
@@ -393,27 +392,30 @@ class ApplicationCompanion(multiprocessing.Process):
         return Response.OK
 
     def __send_command_to_application_manager(self, command):
+        '''helper function to send command to Application Manager'''
         self.__logger.debug(f'sending {command} to Application Manager.')
-        # send START command to Application Manager
         self.__communicator.send(command,
                                  self.__application_manager_in_queue)
 
     def __get_interscalehub_proxy_list(self):
         """
-        returns the InterscaleHub proxy after fetching it from Registry Service
+        returns the list of proxies to InterscaleHubs after fetching it from
+        Registry Service
         """
         interscalehub_proxy_list = []
-        total_interscaleHubs = 4  # TODO replace with number of interscalehubs mpi processes
+        # TODO replace with number of interscalehubs mpi processes as defined
+        # in XML settings
+        total_interscaleHubs = 4
         while len(interscalehub_proxy_list) < total_interscaleHubs:
             # wait until it gets InterscaleHub proxy from Registry
-            self.__logger.info("__DEBUG__ waiting for InterscaleHub"
-                               " connection details. retry in 1 sec")
+            self.__logger.info("waiting for InterscaleHub connection details. "
+                               "retry in 1 sec!")
             time.sleep(1)
             interscalehub_proxy_list =\
                 self.__health_registry_manager_proxy.find_all_by_category(
                     SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB)
 
-        # return the proxy
+        # return the list of proxies
         return interscalehub_proxy_list
 
     def __get_endpoints_as_per_simulator(self, endpoints, direction,
@@ -425,25 +427,25 @@ class ApplicationCompanion(multiprocessing.Process):
         """
         for endpoint in endpoints:
             if endpoint[INTERSCALE_HUB.DATA_EXCHANGE_DIRECTION.name] == direction and\
-                endpoint[INTERSCALE_HUB.INTERCOMM_TYPE.name] == intercomm_type:
+                    endpoint[INTERSCALE_HUB.INTERCOMM_TYPE.name] == intercomm_type:
                 return endpoint
-        
+
         # return None if no matching endpoint is found
-        return None    
+        return None
 
     def __get_endpoints(self, simulator):
         """returns MPI endpoints of InterscaleHubs according to Simulator"""
         intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
         interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_TVB.name,
                           DATA_EXCHANGE_DIRECTION.TVB_TO_NEST.name]
-        if simulator == "TVB":
+        if simulator == "TVB":  # TODO replace it with action type from XML
             intercomms.reverse()
         # get proxies to interscalehubs
         interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
         # get list of interscalehub endpoints        
         interscalehub_endpoints_list = [interscalehub_proxy.endpoint
-                                       for interscalehub_proxy in
-                                       interscalehub_proxy_list]
+                                        for interscalehub_proxy in
+                                        interscalehub_proxy_list]
 
         # get endpoints list as per simulator
         endpoints = []
@@ -465,44 +467,80 @@ class ApplicationCompanion(multiprocessing.Process):
             # remove the found one endpoint to reduce the search space
             # interscalehub_endpoints_list.remove(endpoint)
 
-        self.__logger.info(f"__DEBUG__ simulator: {simulator}, InterscaleHub endpoints: {endpoints}")
+        self.__logger.info(f"simulator: {simulator}, InterscaleHub endpoints: {endpoints}")
         return endpoints
-    
-    def __execute_init_command(self):
-        """helper function to execute INIT steering command"""
-        self.__logger.info("Executing INIT command!")
-        # 1. update local state
-        self.__ac_registered_component_service = self.__update_local_state(SteeringCommands.INIT)
-        if self.__ac_registered_component_service == Response.ERROR:
-            # terminate loudly as state could not be updated
-            # exception is already logged with traceback
-            return self.__respond_with_state_update_error()
 
-        # 2. proceed only if the action is InterscaleHub, otherwise wait until
-        # the InterscaleHub registers its connections details
-        # fetch the action id
-        actions_id = None
+    def __register_interscalehubs_endpoints(self, endpoints):
+        '''helper function to register interscalehub endpoint with Registry'''
+        for endpoint in endpoints:
+            self.__logger.debug(f"running endpoint in response: {endpoint}")
+            pid = endpoint.pop(INTERSCALE_HUB.PID.name, None)
+            name = endpoint.get(INTERSCALE_HUB.DATA_EXCHANGE_DIRECTION.name, None)
+            self.__logger.debug(f"running endpoint after pop: {endpoint}, "
+                                f"pid: {pid}, name: {name}")
+            self.__action_pids.append(pid)
+            if self.__health_registry_manager_proxy.register(
+                    pid,  # id
+                    name,  # name
+                    SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
+                    endpoint,  # endpoint
+                    SERVICE_COMPONENT_STATUS.UP,  # current status
+                    # current state
+                    None  # NOTE Interscale-Hubs do not have states
+                    ) == Response.ERROR:
+                self.__logger.error("Could not registered INTERSCALEHUB "
+                                    f"endpoint: {endpoint}")
+                return Response.ERROR
+            else:
+                self.__logger.info(f"INTERSCALEHUB endpoint {endpoint} is "
+                                    "registered")
+                # continue registering the remaining endpoints
+                continue
+
+        # All InterscaleHub endpoints are registered successfully
+        return Response.OK
+
+    def __get_action_id(self):
+        '''helper function to retrieve action id from actions'''
         try:
-            actions_id = self.__actions.get('action-id')
+            action_id = self.__actions['action-id']
         except KeyError:
             # 'action-id' could not be found in 'actions' dictionary
             # log the exception with traceback
             self.__logger.exception("'action-id' is not a valid key.")
             return Response.ERROR
 
+        # action id is retrieved
+        return action_id
+    
+    def __execute_init_command(self):
+        """helper function to execute INIT steering command"""
+        self.__logger.info("Executing INIT command!")
+        # 1. update local state
+        self.__ac_registered_component_service =\
+            self.__update_local_state(SteeringCommands.INIT)
+        if self.__ac_registered_component_service == Response.ERROR:
+            # terminate loudly as state could not be updated
+            # exception is already logged with traceback
+            return self.__respond_with_state_update_error()
+
+        # fetch the action id
+        action_id = self.__get_action_id()
+        if action_id == Response.ERROR:
+            # NOTE a relevant exception is already logged with traceback
+            # return with error to terminate loudly
+            return Response.ERROR
+
+        # 2. proceed only if the action is InterscaleHub, otherwise wait until
+        # the InterscaleHub registers its connections details
+
         # Case a: action type is SIMULATOR
         # fetch and append InterscaleHub MPI endpoint connection details
-        if actions_id == 'action_004' or actions_id == 'action_010':  # TODO will be updated with the actions_type from XML
-            action_simulator_ids = {'action_004': "NEST", 'action_010':"TVB"}
-
-            # interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
-            # interscalehub_mpi_endpoints = [interscalehub_proxy.endpoint
-            #                                for interscalehub_proxy in
-            #                                interscalehub_proxy_list]
-            
+        if action_id == 'action_004' or action_id == 'action_010':  # TODO will be updated with the actions_type from XML
+            action_simulators_names = {'action_004': "NEST", 'action_010':"TVB"}
             # get mpi endpoint connection details
             interscalehub_mpi_endpoints =\
-                self.__get_endpoints(action_simulator_ids.get(actions_id))
+                self.__get_endpoints(action_simulators_names.get(action_id))
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
             action_with_parameters = self.__actions['action']
@@ -510,7 +548,7 @@ class ApplicationCompanion(multiprocessing.Process):
                         pickle.dumps(interscalehub_mpi_endpoints)))
             self.__actions['action'] = action_with_parameters
 
-        # 2. initialize Application Manager
+        # 3. initialize Application Manager
         self.__application_manager = ApplicationManager(
             # parameters for setting up the uniform log settings
             self._log_settings,  # log settings
@@ -528,14 +566,14 @@ class ApplicationCompanion(multiprocessing.Process):
             enable_resource_usage_monitoring=True,
         )
 
-        # 3. start the application Manager
+        # 4. start the application Manager
         self.__logger.debug("starting application Manager.")
         self.__application_manager.start()
         # send INIT command to Application Manager
         steering_command = SteeringCommands.INIT
         self.__send_command_to_application_manager(steering_command)
 
-        # 4. wait until a response is received from Application Manager after
+        # 5. wait until a response is received from Application Manager after
         # command execution
 
         # NOTE if action type is SIMULATOR then response is PID and the local
@@ -543,48 +581,22 @@ class ApplicationCompanion(multiprocessing.Process):
         # endpoint details if it is INTERSCALE_HUB
         response = self.__receive_response_from_application_manager()
 
-        # if action type is INTERSCALEHUB then register the connection details
-        # with registry
-        if actions_id == 'action_006' or actions_id == 'action_008':  # TODO will be updated with the actions_type from XML
-            # register endpoint with registry service
-            # 2. register with registry
-            # mpi_ports = [mpi_port.get("MPI_CONNECTION_INFO")
-            #               for mpi_port in response]
-            
-            # inter_comm_type = [intercomm.get("INTERCOMM_TYPE")
-            #                    for intercomm in response]
-            
-            # for index, mpi_port in enumerate(mpi_ports):
-            #     endpoints = {INTERSCALE_HUB.INTERCOMM_TYPE: inter_comm_type[index]}
+        # 6. if action type is INTERSCALEHUB then register the connection
+        # details with registry
+        if action_id == 'action_006' or action_id == 'action_008':  # TODO will be updated with the actions_type from XML
+            # register endpoints with registry service
+            if self.__register_interscalehubs_endpoints(response) == Response.ERROR:
+                # InterscaleHubs endpoints could not be registered
+                # return with Error to terminate loudly
+                return Response.ERROR
 
-            self.__logger.info("__DEBUG__ registering INTERSCALEHUB endpoints")
-            for endpoint in response:
-                self.__logger.debug(f"running endpoint in response: {endpoint}")
-                pid = endpoint.pop("PID", None)
-                name = endpoint.get("DATA_EXCHANGE_DIRECTION", None)
-                self.__logger.debug(f"running endpoint after pop: {endpoint}, pid: {pid}, name: {name}")
-                self.__action_pids.append(pid)  # TODO send these pids to Application Manager for monitoring
-                if self.__health_registry_manager_proxy.register(
-                        # response["PID"],  # id
-                        pid,  # id
-                        name,  # name
-                        SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB,  # category
-                        # response["MPI_CONNECTION_INFO"],  # endpoint
-                        endpoint,  # endpoint
-                        SERVICE_COMPONENT_STATUS.UP,  # current status
-                        # current state
-                        None
-                        ) == Response.ERROR:
-                    self.__logger.error("Could not registered INTERSCALEHUB endpoints")
-                    return Response.ERROR
-                else:
-                    self.__logger.debug(f"INTERSCALEHUB endpoint {endpoint} is registered")
-        
-            # InterscaleHubs do not have minimum stepsize, so send empty
+            # Case b: InterscaleHubs endpoints are registered
+
+            # InterscaleHubs do not have minimum stepsize, so send an empty
             # dictionary as a response to Orchestrator
             response = {}
-            
-        # 5. send response to Orchestrator
+
+        # 6. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
         return self.__command_execution_response(response, steering_command)
 
