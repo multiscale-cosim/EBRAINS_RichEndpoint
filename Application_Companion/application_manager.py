@@ -301,7 +301,10 @@ class ApplicationManager(multiprocessing.Process):
         # it is received via (stdin) PIPE as a string in the following format
         # from an INTERSCALE_HUB:
 
-        # {'PID': '<pid>', 'MPI_CONNECTION_INFO': <mpi port name>}
+        # {'PID': '<pid>',
+        # 'DATA_EXCHANGE_DIRECTION': '<direction>',
+        # 'MPI_CONNECTION_INFO': '<mpi port name>',
+        # 'INTERCOMM_TYPE': '<intercomm_type>'}
 
         # STEP 1. find the starting index of response in the output received
         # from InterscaleHub
@@ -489,8 +492,10 @@ class ApplicationManager(multiprocessing.Process):
         """
         for resource_usage_monitor in self.__resource_usage_monitors:
             # get monitor
-            monitor = resource_usage_monitor.get(MONITOR.RESOURCE_USAGE_MONITOR.name)
-            monitored_process_pid = resource_usage_monitor.get(MONITOR.PID_PROCESS_BEING_MONITORED.name)
+            monitor = resource_usage_monitor.get(
+                MONITOR.RESOURCE_USAGE_MONITOR.name)
+            monitored_process_pid = resource_usage_monitor.get(
+                MONITOR.PID_PROCESS_BEING_MONITORED.name)
             # stop resource usage monitoring
             monitor.keep_monitoring = False
             # retrieve resource usage statistics
@@ -571,7 +576,6 @@ class ApplicationManager(multiprocessing.Process):
 
         Parameters
         ----------
-
         response : ...
             response to be sent to Orchestrator
 

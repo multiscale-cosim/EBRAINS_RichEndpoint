@@ -11,7 +11,6 @@
 # Laboratory: Simulation Laboratory Neuroscience
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
-from ast import Return
 import multiprocessing
 import os
 import signal
@@ -586,12 +585,12 @@ class ApplicationCompanion(multiprocessing.Process):
         if action_id == 'action_006' or action_id == 'action_008':  # TODO will be updated with the actions_type from XML
             # register endpoints with registry service
             if self.__register_interscalehubs_endpoints(response) == Response.ERROR:
-                # InterscaleHubs endpoints could not be registered
+                # Case a: InterscaleHubs endpoints could not be registered
                 # return with Error to terminate loudly
                 return Response.ERROR
 
             # Case b: InterscaleHubs endpoints are registered
-
+            self.__logger.debug("Interscalehub endpoints are registered")
             # InterscaleHubs do not have minimum stepsize, so send an empty
             # dictionary as a response to Orchestrator
             response = {}
