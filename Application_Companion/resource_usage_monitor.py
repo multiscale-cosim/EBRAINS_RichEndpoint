@@ -122,8 +122,7 @@ class ResourceUsageMonitor:
                     raise
             else:
                 return True
-    
-    
+
     def get_cpu_stats(self):
         '''
         Method for CPU usage monitoring thread
@@ -193,9 +192,7 @@ class ResourceUsageMonitor:
         # proces is finished and so is the memory usage monitoring
         self.__memory_usage_monitoring_done = True
         self.__logger.info(f"done with memory monitoring for pid: "
-                            f"{self.process_id}")
-    
-            
+                            f"{self.process_id}")           
 
     def get_resource_usage_stats(self, process_exit_status):
         # To get the complete usage details,

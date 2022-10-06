@@ -66,15 +66,35 @@ class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
     PID = 0
     LOCAL_MINIMUM_STEP_SIZE = 1
 
+
 @enum.unique
 class INTEGRATED_INTERSCALEHUB_APPLICATION(enum.IntEnum):
     """ Enum class for integrated applications (InterscaleHub)"""
     PID = 0
     MPI_CONNECTION_INFO = 1
+    INTERCOMM_TYPE = 2  # sender or receiver
+    DATA_EXCHANGE_DIRECTION = 3  # NEST_to_TVB or TVB_to_NEST
+
+
+@enum.unique
+class INTERCOMM_TYPE(enum.IntEnum):
+    """ Enum class for the type of Intercomm"""
+    RECEIVER = 0
+    SENDER = 1
 
 
 @enum.unique
 class PUBLISHING_TOPIC(enum.Enum):
-    """ Enum class for integrated applications (simulators)"""
-    # NOTE ZMQ set socket options i.e. setsockopt() requires the topic to be in bytes
+    """
+    Enum class for publishing topics (a set of) subscribers can subscribe to
+    """
+    # NOTE ZMQ set socket options i.e. setsockopt() requires the topic to be
+    # in bytes
     STEERING = b'steering'
+
+
+@enum.unique
+class MONITOR(enum.Enum):
+    """ Enum class for integrated applications (simulators)"""
+    PID_PROCESS_BEING_MONITORED = 0  # PID of the process being monitored
+    RESOURCE_USAGE_MONITOR = 1

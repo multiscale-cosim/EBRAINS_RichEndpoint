@@ -144,7 +144,7 @@ class Orchestrator(multiprocessing.Process):
                                     self.__orchestrator_registered_component,
                                     input_command)
 
-    def __find_global_minimum_step_size(self, step_sizes_with_pids):
+    def __find_global_minimum_step_size(self, responses_from_actions):
         """
         helper function for finding the minimum step size.
 
@@ -158,15 +158,34 @@ class Orchestrator(multiprocessing.Process):
         minimum step size: float
             the minimum step size of the list.
         """
-        # extract all step sizes from dictionary
-        for dic in step_sizes_with_pids:
-            if dic == {}:
-                step_sizes_with_pids.remove(dic)
-        step_sizes = [
-            sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name]
-            for sub in step_sizes_with_pids]
-        self.__logger.debug(f'step_sizes: {step_sizes}')
-        return min(step_sizes)
+        # list of response dictionaries
+        step_sizes_with_pids = []
+        # remove responses without step_sizes (e.g. from InterscaleHubs)
+        for response in responses_from_actions:
+            self.__logger.debug(f"running dictionary of response: {response}")
+            if response == {}:
+                continue
+            else:
+                # append running dictionary containing pid and stepsize to list
+                step_sizes_with_pids.append(response)
+
+        self.__logger.debug(f"step_sizes_with_pids: {step_sizes_with_pids}")
+
+        # find minimum step size in the list of responses
+        try:
+            # extract all step sizes from the list
+            step_sizes = [
+                sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name]
+                for sub in step_sizes_with_pids]
+            self.__logger.debug(f'step_sizes: {step_sizes}')
+            # return minimum step size in the list
+            return min(step_sizes)
+        except KeyError:
+            # the response does not contain step_size
+            # log exception with traceback
+            self.__logger.exception("could not find step-size in: "
+                                    f"{step_sizes_with_pids}")
+            return Response.ERROR
 
     def __receive_responses(self):
         '''
@@ -223,6 +242,13 @@ class Orchestrator(multiprocessing.Process):
             self.__step_sizes = responses
             self.__logger.debug(f'step_sizes and PIDs: {self.__step_sizes}')
             min_step_size = self.__find_global_minimum_step_size(self.__step_sizes)
+            # check if global minimum step size could not be determined
+            if min_step_size == Response.ERROR:
+                # terminate with Error
+                return Response.ERROR
+
+            # Otherwise, global minimum step size has been determined
+            # successfully
             self.__logger.info(f'Global Minimum Step Size: {min_step_size}')
             return min_step_size
 
