@@ -22,8 +22,8 @@ import ast
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.default_directories_enum import DefaultDirectories
 from EBRAINS_RichEndpoint.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_SIMULATOR_APPLICATION as SIMULATOR
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_SIMULATOR_APPLICATION as SIMULATOR, Response
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_INTERSCALEHUB_APPLICATION as INTERSCALEHUB
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 from EBRAINS_RichEndpoint.Application_Companion.db_manager_file import DBManagerFile
@@ -95,6 +95,10 @@ class ApplicationManager(multiprocessing.Process):
         self.__resource_usage_monitor = None
         self.__exit_status = None
         self.__local_minimum_step_size = {}
+        self.__interscalehub_endpoint = {}
+        self.__response_from_action = {}
+        self.__action_pid = None
+
         self.__logger.debug("Application Manager is initialized.")
 
     def __set_affinity(self, pid):
@@ -131,7 +135,6 @@ class ApplicationManager(multiprocessing.Process):
         int
             return code indicating whether the application is launched
         """
-
         # Turn-off output buffering for the child process
         os.environ['PYTHONUNBUFFERED'] = "1"
         # 1. run the application
@@ -279,7 +282,7 @@ class ApplicationManager(multiprocessing.Process):
                 f'exception while reading from {std_stream}')
             return ''
 
-    def __convert_string_to_dictionary(self, lines):
+    def __convert_string_to_dictionary(self, lines, first_key):
         """
         finds and extracts the local minimum step size information from
         std_out stream, and converts it to a dictionary.
@@ -291,19 +294,22 @@ class ApplicationManager(multiprocessing.Process):
         """
         # STEP 1. find the index of local minimum step size information in the
         # output received from application
-        index = lines.find(SIMULATOR.PID.name)
+        index = lines.find(first_key)
 
         # STEP 2. covert string to dictionary
 
         # NOTE as per protocol, the local minimum step size is received as a
         # response of INIT command
         # For now, it is received via (stdin) PIPE as a string in the
-        # following format:
+        # following format if it is a SIMULATOR:
         # {'PID': '<pid>', 'LOCAL_MINIMUM_STEP_SIZE': '0.05'}
+        # otherwise if it is an INTERSCALE_HUB:
+        # {'PID': '<pid>', 'MPI_CONNECTION_INFO': <string>}
         # so the index of curly bracket {'PID'... is index-2, which is needed
         # to convert it into dictionary.
         try:
-            self.__local_minimum_step_size = ast.literal_eval(lines[index - 2:])
+            self.__response_from_action = ast.literal_eval(lines[index - 2:])
+            self.__action_pid = self.__response_from_action["PID"]
             return Response.OK
         except Exception:
             # Could not convert string into dict
@@ -311,6 +317,41 @@ class ApplicationManager(multiprocessing.Process):
             self.__logger.exception(f'could not convert {lines[index - 2:]} into'
                                     f' the dictionary.')
             return Response.ERROR
+
+    # def __convert_string_to_dictionary(self, lines):
+    #     """
+    #     finds and extracts the local minimum step size information from
+    #     std_out stream, and converts it to a dictionary.
+
+    #     Parameters
+    #     ----------
+    #     lines : str
+    #         output received from the application
+    #     """
+    #     # STEP 1. find the index of local minimum step size information in the
+    #     # output received from application
+    #     index = lines.find(SIMULATOR.PID.name)
+
+    #     # STEP 2. covert string to dictionary
+
+    #     # NOTE as per protocol, the local minimum step size is received as a
+    #     # response of INIT command
+    #     # For now, it is received via (stdin) PIPE as a string in the
+    #     # following format:
+    #     # {'PID': '<pid>', 'LOCAL_MINIMUM_STEP_SIZE': '0.05'}
+    #     # so the index of curly bracket {'PID'... is index-2, which is needed
+    #     # to convert it into dictionary.
+    #     try:
+    #         # self.__local_minimum_step_size = ast.literal_eval(lines[index - 2:])
+    #         self.__response_from_action = ast.literal_eval(lines[index - 2:])
+    #         self.__action_pid = self.__response_from_action["PID"]
+    #         return Response.OK
+    #     except Exception:
+    #         # Could not convert string into dict
+    #         # log the exception with traceback and return with error
+    #         self.__logger.exception(f'could not convert {lines[index - 2:]} into'
+    #                                 f' the dictionary.')
+    #         return Response.ERROR
 
     def __read_popen_pipes(self, application):
         """
@@ -340,11 +381,13 @@ class ApplicationManager(multiprocessing.Process):
                     self.__logger.info(
                         f"action <{self.__actions_id}>: "
                         f"{decoded_lines}")
-                    # get local minimum step size received from the application
+                   
+                    # get local minimum step size received from the Simulator
                     # as a response to INIT command
-
                     if SIMULATOR.LOCAL_MINIMUM_STEP_SIZE.name in decoded_lines:
-                        if self.__convert_string_to_dictionary(decoded_lines) == \
+                        # if self.__convert_string_to_dictionary(decoded_lines) == \
+                        #         Response.ERROR:
+                        if self.__convert_string_to_dictionary(decoded_lines, SIMULATOR.PID.name) == \
                                 Response.ERROR:
                             # Case a. Local minimum step size could not be
                             # determined, terminate the execution with error
@@ -356,6 +399,23 @@ class ApplicationManager(multiprocessing.Process):
                         # Case b. All information (received as a response to
                         # INIT command) is read from PIPES, now execute other
                         # steering commands
+                        break
+
+                    # get MPI connection details received from the InterscaleHub
+                    # as a response to INIT command
+                    if INTERSCALEHUB.MPI_CONNECTION_INFO.name in decoded_lines:
+                        if self.__convert_string_to_dictionary(decoded_lines, INTERSCALEHUB.PID.name) == \
+                                Response.ERROR:
+                            # Case a. MPI connection details could not be
+                            # determined, terminate the execution with error
+                            # NOTE an exception with traceback is already
+                            # logged
+                            self.__stop_preemptory()
+                            return Response.ERROR
+
+                        # Case b. All Output from INTERSCALEHUB (as a response
+                        # to INIT command) is read from PIPES, now execute
+                        # other steering commands
                         break
 
                 # read from the application error stream
@@ -505,6 +565,24 @@ class ApplicationManager(multiprocessing.Process):
         2. Receives the local step size from the simulator and sends it to the
         Orchestrator via Application Companion.
         """
+        # TODO Launch applications
+        # if it is InterscaleHub
+        # else keep waiting (if it is simulators) until the connection
+        # details of InterscaleHubs are registered with registry
+
+        # TODO if it is InterscaleHub,
+        # Launch it
+        # i. get connection details from the output stream of application
+        # which is in the following format: {'PID': <int>, 'MPI_CONNECTION_INFO': <string>}
+        # ii. register it with Registry Service
+        # ii. Continue with normal flow,send response to Orchestrator, etc.
+
+        # TODO if it is Simulator,
+        # i. look-up loop until fetches connection details of InterscaleHub
+        # from Registry Service
+        # ii. Launch Application along with this connection info
+        # Continue with normal flow, i.e. look for response i.e. <PID, local_minimum_step_size>
+
         # 1. Launch application
         if self.__launch_application(self.__application) == Response.ERROR:
             # Case a, could not launch the application
@@ -548,18 +626,21 @@ class ApplicationManager(multiprocessing.Process):
         # 3. start resource usage monitoring, if enabled
         if self.__is_monitoring_enabled:
             # pid = self.__local_minimum_step_size[SIMULATOR.PID.name]
-            pid = self.__local_minimum_step_size.get("PID")
-            self.__logger.info(f"starting monitoring for {pid}")
-            if self.__start_resource_usage_monitoring(pid) == Response.ERROR:
+            # pid = self.__local_minimum_step_size.get("PID")
+            self.__logger.info(f"starting monitoring for {self.__action_pid}")
+            if self.__start_resource_usage_monitoring(self.__action_pid) == Response.ERROR:
                 # monitoring could not be started, a relevant exception is
                 # already logged with traceback
                 return Response.ERROR
 
         # 3. send local minimum step size as a response to Application
         # Companion
-        self.__logger.debug(f'outputs are read from {self.__actions_id}: {self.__local_minimum_step_size}')
+        # self.__logger.debug(f'outputs are read from {self.__actions_id}: {self.__local_minimum_step_size}')
+        # self.__send_response_to_application_companion(
+        #     self.__local_minimum_step_size)
+        self.__logger.debug(f'outputs are read from {self.__actions_id}: {self.__response_from_action}')
         self.__send_response_to_application_companion(
-            self.__local_minimum_step_size)
+            self.__response_from_action)
         return Response.OK
 
     def __execute_start_command(self):

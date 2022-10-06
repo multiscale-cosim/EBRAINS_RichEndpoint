@@ -50,7 +50,7 @@ class SERVICE_COMPONENT_CATEGORY(enum.IntEnum):
     ORCHESTRATOR = 1
     COMMAND_AND_CONTROL = 2
     STEERING_SERVICE = 3
-    TRANSFORMER = 4
+    INTERSCALE_HUB = 4
 
 
 @enum.unique
@@ -65,6 +65,12 @@ class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
     """ Enum class for integrated applications (simulators)"""
     PID = 0
     LOCAL_MINIMUM_STEP_SIZE = 1
+
+@enum.unique
+class INTEGRATED_INTERSCALEHUB_APPLICATION(enum.IntEnum):
+    """ Enum class for integrated applications (InterscaleHub)"""
+    PID = 0
+    MPI_CONNECTION_INFO = 1
 
 
 @enum.unique
