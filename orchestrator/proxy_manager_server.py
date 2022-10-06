@@ -43,7 +43,7 @@ class ProxyManagerServer:
             self.__proxy_manager.start()  # start the manager process
         except EOFError as e:
             # Case a: it finds EOF error while starting the process.
-            # So, print the exception and retrun None to handle it by calling
+            # So, print the exception and return None to handle it by calling
             # function
             print(e)
             return None

@@ -14,6 +14,7 @@
 import time
 
 from common.utils import proxy_manager_server_utils
+from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.application_companion import ApplicationCompanion
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_server import ProxyManagerServer
@@ -28,69 +29,113 @@ from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerC
 class Launcher:
     '''launches the all the necessary components to execute the workflow.'''
 
-    def __init__(self, log_settings, configurations_manager):
+    def __init__(self, log_settings, configurations_manager,
+                 proxy_manager_server_address=None,
+                 communication_settings_dict=None):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
+
+        # to be used for ZMQ (or another communication framework/library)
+        self.__communication_settings_dict = communication_settings_dict
+
         self.__logger = self._configurations_manager.load_log_configurations(
-                                        name=__name__,
-                                        log_configurations=self._log_settings)
-        
+            name=__name__,
+            log_configurations=self._log_settings)
+
+        # set Proxy Manager Server connection details
+        self.__proxy_manager_connection_details = {}
+        self.__set_up_proxy_manager_connection_details(proxy_manager_server_address)
+
         # initialize Proxy Manager Server process
         self.__proxy_manager_server = ProxyManagerServer(
-            proxy_manager_server_utils.IP,
-            proxy_manager_server_utils.PORT,
-            proxy_manager_server_utils.KEY)
+            self.__proxy_manager_connection_details["IP"],
+            self.__proxy_manager_connection_details["PORT"],
+            self.__proxy_manager_connection_details["KEY"])
 
-        # start the Proxy Manager Server to listen and accept the connection requests
+        # start the Proxy Manager Server to listen and accept the connection
+        # requests
         if self.__proxy_manager_server.start() == Response.ERROR:
             # Case, proxy manager could not be started
             # raise an exception and terminate with error
-            proxy_manager_server_utils.terminate_with_error("Launcher could not start Proxy Manager Server!")
-
+            self.__log_exception_and_terminate_with_error(
+                "Launcher could not start Proxy Manager Server!")
 
         # get client to Proxy Manager Server
-        self._proxy_manager_client =  ProxyManagerClient(
+        self._proxy_manager_client = ProxyManagerClient(
             self._log_settings,
             self._configurations_manager)
 
         # Connect with Proxy Manager Server
         # NOTE: it terminates with RuntimeError if connection could ne be made
         # for whatever reasons
+
         self._proxy_manager_client.connect(
-            proxy_manager_server_utils.IP,
-            proxy_manager_server_utils.PORT,
-            proxy_manager_server_utils.KEY,
-        )
+            self.__proxy_manager_connection_details["IP"],
+            self.__proxy_manager_connection_details["PORT"],
+            self.__proxy_manager_connection_details["KEY"])
 
         # Now, get the proxy to registry manager
-        self.__component_service_registry_manager =\
-             self._proxy_manager_client.get_registry_proxy()
+        self.__component_service_registry_manager = \
+            self._proxy_manager_client.get_registry_proxy()
+
+        # Latency = Propagation Time + Transmission Time + Queuing Time + Processing Delay
+        self.__latency = None  # NOTE must be determine runtime
+
+        # setting port range for components
+        # print(f'__debug__,__communication_settings_dict={self.__communication_settings_dict}')
+        if self.__communication_settings_dict is not None:
+            # values were gotten from XML configuration file
+            self.__ports_for_command_control_channel = self.__communication_settings_dict
+        else:
+            # NOTE initializing with hardcoded range from utils
+            self.__ports_for_command_control_channel = networking_utils.default_range_of_ports
+        # print(f'__debug__,networking_utils.default_range_of_ports={networking_utils.default_range_of_ports}')
+        # print(f'__debug__,__ports_for_command_control_channel={self.__ports_for_command_control_channel}')
+
+        # if Command&Control channel is going to be established between multiple nodes
+        if self.__ports_for_command_control_channel is not None:
+            self.__port_range_for_orchestrator = self.__ports_for_command_control_channel["ORCHESTRATOR"]
+            self.__port_range_for_command_control = self.__ports_for_command_control_channel["COMMAND_CONTROL"]
+            self.__port_range_for_application_companions = self.__ports_for_command_control_channel[
+                "APPLICATION_COMPANION"]
 
         self.__logger.debug("initialized.")
-    
-    def __is_component_registered(
-                self, componenet_service,
-                component_service_name,
-                network_delay=2):  # TODO: set with run-time network delay
+
+    def __set_up_proxy_manager_connection_details(
+            self, proxy_manager_server_address):
+        """
+        initializes Proxy Manager Server connection details
+        """
+        if proxy_manager_server_address is None:
+            self.__proxy_manager_connection_details = {
+                "IP": proxy_manager_server_utils.IP,
+                "PORT": proxy_manager_server_utils.PORT,
+                "KEY": proxy_manager_server_utils.KEY}
+        else:
+            self.__proxy_manager_connection_details = proxy_manager_server_address
+
+    def __get_proxy_to_registered_component(self, component_service,
+                                            component_service_name):
         '''
-        Checks whether the component is registered with registry.
-        Returns the component if registered.
-        Returns None if not registered.
+        It checks whether the component is registered with registry.
+        If registered, it returns the proxy to component.
+        Otherwise, it returns None.
         '''
-        # timout to rule out network delay
-        timeout = time.time() + network_delay
+        # timeout to rule out the network delay
+        timeout = time.time() + self.__latency
         component = None
         while time.time() <= timeout:
-            if componenet_service.is_registered_in_registry.is_set():
-                component = self.__component_service_registry_manager.\
+            if component_service.is_registered_in_registry.is_set():
+                component = self.__component_service_registry_manager. \
                     find_all_by_category(component_service_name)
                 self.__logger.debug(f'{component} is found.')
                 break
             else:
                 time.sleep(0.001)  # do not hog CPU
                 continue
+        # if component could not be found in registry after the timeout
         if component is None:
-            self.__logger.critical(f'TIMEOUT! {componenet_service} '
+            self.__logger.critical(f'TIMEOUT! {component_service} '
                                    f'is not registered yet.')
         return component
 
@@ -104,91 +149,112 @@ class Launcher:
         steering_service.terminate()
         steering_service.join()
 
+    def __log_exception_and_terminate_with_error(self, error_summary):
+        """
+        Logs the exception with traceback and returns with ERROR as response to
+        terminate with error"""
+        try:
+            # raise RuntimeError exception
+            raise RuntimeError
+        except RuntimeError:
+            # log the exception with traceback
+            self.__logger.exception(error_summary)
+        # respond with Error to terminate
+        return Response.ERROR
+
+    def __compute_latency(self):
+        """returns the latency of the network"""
+        latency = 2  # TODO determine the latency to registry service
+        return latency
+
     def launch(self, actions):
         '''
         launches the necessary components (Application Companions and
         Orchestrator) as per actions.
         '''
-        # 1. append proxy to service registry to action arg list
-        # for action in actions:
-        #     try:
-        #         import base64
-        #         import pickle
-        #         action['action'].append(base64.b64encode(pickle.dumps(self.__component_service_registry_manager)))
-        #     except KeyError:
-        #         self.__logger.error(f"No action Popen arg are found"
-        #                             f"<{action['action_xml_id']}>")
-        
-        # 2. initialize Application Comanions
+        # determine network delay
+        self.__latency = self.__compute_latency()
+
+        # 1. launch Command&Control service
+        self.__logger.info('setting up Command and Control service.')
+        steering_service = CommandControlService(
+            self._log_settings,
+            self._configurations_manager,
+            self.__proxy_manager_connection_details,
+            self.__port_range_for_command_control)
+        steering_service.start()
+
+        # check if Command&Control is already registered with registry
+        if self.__get_proxy_to_registered_component(
+                steering_service,
+                SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
+            # log exception with traceback and terminate with error
+            self.__log_exception_and_terminate_with_error(
+                'Command&Control service is not yet registered')
+
+        # 2. launch the Application Companions
         application_companions = []
         for action in actions:
             application_companions.append(ApplicationCompanion(
-                                    self._log_settings,
-                                    self._configurations_manager,
-                                    action))
-        # 3. launch the application companions
+                self._log_settings,
+                self._configurations_manager,
+                action,
+                self.__proxy_manager_connection_details,
+                self.__port_range_for_application_companions))
+
         for application_companion in application_companions:
             self.__logger.info('setting up Application Companion.')
             application_companion.start()
-        # allow application companions to register with registry
-        time.sleep(2)  # TODO: set as run-time network delay
 
-        # 4. initialize steering service
-        self.__logger.info('setting up Command and Control service.')
-        steering_service = CommandControlService(
-                                    self._log_settings,
-                                    self._configurations_manager)
-        # 5. launch C&S service
-        steering_service.start()
-        
-        # 6. check if C&S is registered
-        if self.__is_component_registered(
-                    steering_service,
-                    SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
-            self.__logger.exception('registry returns None for Command and Control \
-                                    service.')
-            # terminate Application Companions
-            self.__terminate_application_companions(application_companions)
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('got the exception')
-            return Response.ERROR
+        # check if Application Companions are already registered with registry
+        for application_companion in application_companions:
+            if self.__get_proxy_to_registered_component(
+                    application_companion,
+                    SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION) is None:
+                # terminate Command&Control service
+                self.__terminate_command_and_control_service(steering_service)
+                # log exception with traceback and terminate with error
+                self.__log_exception_and_terminate_with_error(
+                    f'{application_companion} is not yet registered')
 
-        # 7. initialize orchestrator
-        self.__logger.info('Setting up Orchestrator.')
+        # 3. launch Orchestrator
+        self.__logger.info('setting up Orchestrator.')
         orchestrator = Orchestrator(self._log_settings,
-                                    self._configurations_manager)
-        
-        # 8. launch orchestrator
+                                    self._configurations_manager,
+                                    self.__proxy_manager_connection_details,
+                                    self.__port_range_for_orchestrator)
         orchestrator.start()
-        orchestrator_component = self.__is_component_registered(
-                                    orchestrator,
-                                    SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
+        # check if Orchestrator is already registered with registry
+        orchestrator_component = self.__get_proxy_to_registered_component(
+            orchestrator,
+            SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
+        # Case a: Orchestrator is not yet registered
         if orchestrator_component is None:
-            # terminate Application Companions
-            self.__terminate_application_companions(application_companions)
             # terminate Command and Control service
             self.__terminate_command_and_control_service(steering_service)
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('registry returns None for Orchestrator.')
-            # terminate with error
-            return Response.ERROR
+            # terminate Application Companions
+            self.__terminate_application_companions(application_companions)
+            # log exception with traceback and terminate with error
+            self.__log_exception_and_terminate_with_error(
+                'Orchestrator is not yet registered')
 
-        orchestrator_component_in_queue,  orchestrator_component_out_queue =\
-            orchestrator_component[0].endpoint
+        # Case b: Orchestrator is already registered
+        # get orchestrator endpoints for communication
+        if self.__ports_for_command_control_channel is None:
+            orchestrator_in_queue_proxy = \
+                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
+            orchestrator_out_queue_proxy = \
+                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL]
+        else:
+            orchestrator_in_queue_proxy = orchestrator_out_queue_proxy = \
+                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
 
-        # 9. launch the steering menu handler
+        # 4. launch the Steering Menu Handler
         # NOTE: this is to demonstrate the POC of steering via CLI
         poc_steering_menu = POCSteeringMenu(self._log_settings,
                                             self._configurations_manager,
-                                            orchestrator_component_in_queue,
-                                            orchestrator_component_out_queue)
+                                            orchestrator_in_queue_proxy,
+                                            orchestrator_out_queue_proxy,
+                                            communicate_via_zmqs=True)
         poc_steering_menu.start_steering()
         return Response.OK

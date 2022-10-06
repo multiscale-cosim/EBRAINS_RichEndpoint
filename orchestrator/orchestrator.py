@@ -14,7 +14,7 @@ import multiprocessing
 import os
 import signal
 
-from common.utils import proxy_manager_server_utils
+from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTEGRATED_SIMULATOR_APPLICATION
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
@@ -22,13 +22,18 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 from EBRAINS_RichEndpoint.orchestrator.health_status_monitor import HealthStatusMonitor
+from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
+from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 
 
 class Orchestrator(multiprocessing.Process):
-    def __init__(self, log_settings, configurations_manager):
+    def __init__(self, log_settings, configurations_manager,
+                 proxy_manager_connection_details,
+                 port_range=None):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -44,25 +49,19 @@ class Orchestrator(multiprocessing.Process):
         signal.signal(signal.SIGTERM,
                       self.__signal_manager.kill_signal_handler
                       )
-
-        # proxies to the shared queues
-        self.__orchestrator_in_queue =\
-            multiprocessing.Manager().Queue()  # for in-comming messages
-        self.__orchestrator_out_queue =\
-            multiprocessing.Manager().Queue()  # for out-going messages
-
+       
         # get client to Proxy Manager Server
         self._proxy_manager_client = ProxyManagerClient(
             self._log_settings,
             self._configurations_manager)
 
         # Connect with Proxy Manager Server
-        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # NOTE: it terminates with RuntimeError if connection could not be made
         # for whatever reasons
         self._proxy_manager_client.connect(
-            proxy_manager_server_utils.IP,
-            proxy_manager_server_utils.PORT,
-            proxy_manager_server_utils.KEY,
+            proxy_manager_connection_details["IP"],
+            proxy_manager_connection_details["PORT"],
+            proxy_manager_connection_details["KEY"],
         )
 
         # Now, get the proxy to registry manager
@@ -82,10 +81,11 @@ class Orchestrator(multiprocessing.Process):
         self.__steering_commands_history = []
         self.__responses_received = []
         self.__command_and_control_service = []
-        self.__command_and_steering_service_in_queue = None
-        self.__command_and_steering_service_out_queue = None
+        self.__command_and_steering_service_endpoint = None
         self.__orchestrator_registered_component = None
+        self.__port_range = port_range
         self.__communicator = None
+        # self.__communicator_zmq = None
         self.__logger.debug("Orchestrator is initialized.")
 
     @property
@@ -105,7 +105,7 @@ class Orchestrator(multiprocessing.Process):
     
     def __get_component_from_registry(self, target_components_category) -> list:
         """
-        helper function for retreiving the proxy of registered components by
+        helper function for retrieving the proxy of registered components by
         category.
 
         Parameters
@@ -143,9 +143,8 @@ class Orchestrator(multiprocessing.Process):
         return self.__health_registry_manager_proxy.update_local_state(
                                     self.__orchestrator_registered_component,
                                     input_command)
-        
 
-    def __find_global_minimum_step_size(self, step_sizes_with_pids):
+    def __find_global_minimum_step_size(self, responses_from_actions):
         """
         helper function for finding the minimum step size.
 
@@ -159,25 +158,54 @@ class Orchestrator(multiprocessing.Process):
         minimum step size: float
             the minimum step size of the list.
         """
-        # extract all step sizes from dictionary
-        for dic in step_sizes_with_pids:
-            if dic == {}:
-                step_sizes_with_pids.remove(dic)
-        step_sizes = [sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name] for sub in step_sizes_with_pids]
-        self.__logger.debug(f'step_sizes: {step_sizes}')
-        return min(step_sizes)
+        # list of response dictionaries
+        step_sizes_with_pids = []
+        # remove responses without step_sizes (e.g. from InterscaleHubs)
+        for response in responses_from_actions:
+            self.__logger.debug(f"running dictionary of response: {response}")
+            if response == {}:
+                continue
+            else:
+                # append running dictionary containing pid and stepsize to list
+                step_sizes_with_pids.append(response)
+
+        self.__logger.debug(f"step_sizes_with_pids: {step_sizes_with_pids}")
+
+        # find minimum step size in the list of responses
+        try:
+            # extract all step sizes from the list
+            step_sizes = [
+                sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name]
+                for sub in step_sizes_with_pids]
+            self.__logger.debug(f'step_sizes: {step_sizes}')
+            # return minimum step size in the list
+            return min(step_sizes)
+        except KeyError:
+            # the response does not contain step_size
+            # log exception with traceback
+            self.__logger.exception("could not find step-size in: "
+                                    f"{step_sizes_with_pids}")
+            return Response.ERROR
 
     def __receive_responses(self):
         '''
-        helper function for receiving the responses from Application Companions.
+        helper function for receiving the responses from Application Companions
+        via C&C channel.
         '''
-        try:
-            return self.__communicator.receive(
-                    self.__command_and_steering_service_out_queue)
-        except Exception:
-            # Log the exception with Traceback details
-            self.__logger.exception('exception while getting response.')
-            return Response.ERROR
+        self.__logger.debug('getting the response.')
+        return self.__communicator.receive(self.__endpoint_with_command_control_service)
+
+    # def __receive_responses(self):
+    #     '''
+    #     helper function for receiving the responses from Application Companions.
+    #     '''
+    #     try:
+    #         return self.__communicator.receive(
+    #                 self.__command_and_steering_service_out_queue)
+    #     except Exception:
+    #         # Log the exception with Traceback details
+    #         self.__logger.exception('exception while getting response.')
+    #         return Response.ERROR
 
     def __process_responses(self, responses, steering_command):
         '''
@@ -197,7 +225,9 @@ class Orchestrator(multiprocessing.Process):
         '''
         self.__logger.debug(f'got the response: {responses}')
         # Case, received local state update failure as response
-        if EVENT.STATE_UPDATE_FATAL in responses:
+        if EVENT.STATE_UPDATE_FATAL in responses\
+                or EVENT.FATAL in responses\
+                or Response.ERROR in responses:
             self.__logger.critical('directing C&C to terminate with error.')
             # send terminate command to C&C service
             self.__send_terminate_command(EVENT.STATE_UPDATE_FATAL)
@@ -212,6 +242,13 @@ class Orchestrator(multiprocessing.Process):
             self.__step_sizes = responses
             self.__logger.debug(f'step_sizes and PIDs: {self.__step_sizes}')
             min_step_size = self.__find_global_minimum_step_size(self.__step_sizes)
+            # check if global minimum step size could not be determined
+            if min_step_size == Response.ERROR:
+                # terminate with Error
+                return Response.ERROR
+
+            # Otherwise, global minimum step size has been determined
+            # successfully
             self.__logger.info(f'Global Minimum Step Size: {min_step_size}')
             return min_step_size
 
@@ -228,18 +265,18 @@ class Orchestrator(multiprocessing.Process):
         # send terminate command to C&C service
         self.__communicator.send(
                         fatal_event,
-                        self.__command_and_steering_service_in_queue)
+                        self.__endpoint_with_command_control_service)
 
     def __execute_steering_command(self, steering_command):
         """
         helper function for executing the Steering Commands.
         """
-        self.__logger.debug(f'Executing steering command: {steering_command}!')
+        self.__logger.debug(f'Executing command: {steering_command.name}!')
         # 1. send steering command to C&C service
         # Case a, something went wrong while sending
         if self.__communicator.send(
                 steering_command,
-                self.__command_and_steering_service_in_queue) ==\
+                self.__endpoint_with_command_control_service) ==\
                 Response.ERROR:
             try:
                 # sending failed, raise an exception
@@ -253,26 +290,27 @@ class Orchestrator(multiprocessing.Process):
 
         # Case b, command is sent, record the command in history
         self.__steering_commands_history.append(steering_command.name)
+
         # 2. Receive the responses
         self.__logger.debug('getting the response.')
         responses = self.__receive_responses()
-        # Case a, something went wrong while getting response
-        if responses == Response.ERROR:
-            # NOTE exception with traceback is already logged
-            # return with error
-            return Response.ERROR
+        # Case a, something went wrong with Application Companions while
+        #  executing
+        # if responses == Response.ERROR:
+        #     # NOTE exception with traceback is already logged
+        #     # return with error
+        #     return Response.ERROR
 
-        # Case b, responses received successfully
+        # Case b, responses is received successfully
         # 3. process responses
-        if self.__process_responses(responses,
-                                    steering_command) == Response.ERROR:
+        if self.__process_responses(responses, steering_command) == Response.ERROR:
             # return with error
             return Response.ERROR
 
-        # Case, the command is executed successfully
+        # Case, the command is executed successfully and everything went well
         self.__logger.debug(f'Successfully executed the command:'
                             f'{steering_command.name}')
-        self.__logger.info(f'Current global state: {self.current_global_state()}')
+        self.__logger.info(f'Global state now: {self.current_global_state()}')
         self.__logger.info(f'uptime till now: {self.up_time_till_now()}')
         return Response.OK
 
@@ -289,14 +327,10 @@ class Orchestrator(multiprocessing.Process):
         valid_state: STATES.Enum
             valid global state to execute the Steering Command
 
-        new_state: STATES.Enum
-            new global state to be transitioned after successful execution of
-            the Steering Command
-
         Returns
         ------
         response code: int
-            response code indicating if the command is successfully executed
+            response code indicating whether the command is successfully executed
             and the global state is transitioned
         '''
         # i. check if the global state is valid for steering_command execution
@@ -307,7 +341,7 @@ class Orchestrator(multiprocessing.Process):
             return Response.ERROR
 
         # ii. update local state
-        state_before_local_state = self.__orchestrator_registered_component.current_state
+        state_before_transition = self.__orchestrator_registered_component.current_state
         self.__orchestrator_registered_component = self.__update_local_state(steering_command)
         if self.__orchestrator_registered_component == Response.ERROR:
             # local state could not be updated
@@ -315,9 +349,10 @@ class Orchestrator(multiprocessing.Process):
             # callee function
             self.__logger.critical('Error updating the local state.')
             return Response.ERROR
-        state_after_local_state = self.__orchestrator_registered_component.current_state
+        state_after_transition = self.__orchestrator_registered_component.current_state
         self.__health_registry_manager_proxy.update_state_transition_history(
-            state_before_local_state.name, steering_command.name, state_after_local_state.name
+            state_before_transition.name, steering_command.name,
+            state_after_transition.name
         )
 
         # iii. send steering command to Application Companions
@@ -341,8 +376,7 @@ class Orchestrator(multiprocessing.Process):
                         os.getpid(),  # id
                         SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR,   # category
                         SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR,   # name
-                        (self.__orchestrator_in_queue,  # endpoint
-                         self.__orchestrator_out_queue),
+                        self.__endpoints_address,  # endpoint
                         SERVICE_COMPONENT_STATUS.UP,  # current status
                         STATES.READY) == Response.ERROR:  # current state
             # Case, registration fails
@@ -351,7 +385,7 @@ class Orchestrator(multiprocessing.Process):
                 raise RuntimeError
             except RuntimeError:
                 # log the exception with traceback
-                self.__logger.exception('Could not be registered. Quiting!')
+                self.__logger.exception('Could not be registered. Quitting!')
                 # raise signal to terminate
                 signal.raise_signal(signal.SIGTERM)
             # terminate with error
@@ -360,7 +394,8 @@ class Orchestrator(multiprocessing.Process):
         # Case, registration is done
         # indicate a successful registration
         self.__is_registered.set()
-        # retrieve registered component which is later needed to update states
+        # retrieve proxy to registered component which is later needed to
+        # update the states
         self.__orchestrator_registered_component =\
             self.__health_registry_manager_proxy.find_by_id(os.getpid())
         self.__logger.debug(
@@ -369,37 +404,146 @@ class Orchestrator(multiprocessing.Process):
             f'; name: {self.__orchestrator_registered_component.name}')
         return Response.OK
 
-    def __set_up_runtime(self):
+    def __setup_endpoints(self):
+        """creates communication endpoints"""
+        # if the range of ports are not provided then use the shared queues
+        # assuming that it is to be deployed on laptop/single node
+        if self.__port_range is None:
+            # proxies to the shared queues
+            # for in-coming messages
+            self.__endpoint_with_steering_service = multiprocessing.Manager().Queue()
+            # for out-going messages
+            self.__endpoint_with_command_control_service = multiprocessing.Manager().Queue()
+            self.__endpoints_address = {
+                # endpoint with Steering service to receive the commands
+                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE:
+                    self.__endpoint_with_steering_service,
+                # endpoint with Command&Control service to send the commands
+                SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL:
+                    self.__endpoint_with_command_control_service
+                    }
+            return Response.OK
+        # Otherwise, create 0MQ sockets and bind with given port range
+        else:
+            # create ZMQ endpoints
+            self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+            # Endpoint with CLI for receiving commands via a REP socket
+            self.__endpoint_with_steering_service = self.__zmq_sockets.rep_socket()
+            # Endpoint with C&C service for sending commands via a REQ socket
+            self.__endpoint_with_command_control_service = self.__zmq_sockets.req_socket()
+            # get IP address
+            self.__my_ip = networking_utils.my_ip()
+            # get the port bound to REP socket to communicate with Steering
+            # Service
+            port_with_steering =\
+                self.__zmq_sockets.bind_to_first_available_port(
+                    zmq_socket=self.__endpoint_with_steering_service,
+                    ip=self.__my_ip,
+                    min_port=self.__port_range['MIN'],
+                    max_port=self.__port_range['MAX'],
+                    max_tries=self.__port_range['MAX_TRIES']
+                )
+
+            # check if port could not be bound
+            if port_with_steering is Response.ERROR:
+                # NOTE the relevant exception with traceback is already logged
+                # by callee function
+                self.__logger.error("port with Steering service could not be "
+                                    "bound")
+                # return with error to terminate
+                return Response.ERROR
+
+            # everything went well, now create endpoints address
+            endpoint_address_with_steering_service = Endpoint(
+                self.__my_ip, port_with_steering)
+            self.__endpoints_address = {
+                                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE:
+                                endpoint_address_with_steering_service
+                    }
+
+            return Response.OK
+
+    def __setup_channel_with_command_control_service(self):
+        """
+        helper function to set up communication channels with steering CLI
+        and C&C service
+        """
+        # 1. fetch proxy to C&C from registry
+        self.__command_and_control_service =\
+            self.__get_component_from_registry(
+                        SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL
+                        )
+        self.__logger.debug(f'command and steering service: '
+                            f'{self.__command_and_control_service[0]}')
+
+        if self.__command_and_control_service == Response.ERROR:
+            self.__logger.critical('Proxy to Command and Control service is '
+                                   'not found in registry')
+            # return with error to terminate
+            return Response.ERROR
+
+        # 2. fetch C&C endpoint to communicate with Orchestrator
+        self.__command_and_steering_service_endpoint =\
+            self.__command_and_control_service[0].endpoint[
+                SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR]
+
+        # 3. connect with endpoint (REP socket) of C&C service
+        self.__endpoint_with_command_control_service.connect(
+            f"tcp://"  # protocol
+            f"{self.__command_and_steering_service_endpoint.IP}:"  # ip
+            f"{self.__command_and_steering_service_endpoint.port}"  # port
+            )
+        self.__logger.info(
+            "C&C channel - connected with C&C service to send commands at "
+            f"{self.__command_and_steering_service_endpoint.IP}"
+            f":{self.__command_and_steering_service_endpoint.port}")
+
+        return Response.OK
+
+    def __setup_communicator(self):
+        """
+        helper function to set up a generic communicator to encapsulate the
+        underlying tech going to be used for communication.
+        """
+        if self.__port_range is None:  # communicate via shared queues
+            self.__communicator = CommunicatorQueue(
+                self._log_settings,
+                self._configurations_manager)
+        else:  # communicate via 0MQs
+            self.__communicator = CommunicatorZMQ(
+                self._log_settings,
+                self._configurations_manager)
+
+    def __setup_runtime(self):
         """
         helper function for setting up runtime such as register with registry,
         update global state, etc. before starting orchestration.
         """
-        # register with registry
+        # 1. create endpoints for communications
+        self.__setup_endpoints()
+
+        # 2. register with registry
         if self.__register_with_registry() == Response.ERROR:
             # terminate with ERROR
             return Response.ERROR
-        # fetch C&C from registry
-        self.__command_and_control_service =\
-            self.__get_component_from_registry(
-                        SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL)
-        self.__logger.debug(f'command and steering service: '
-                            f'{self.__command_and_control_service[0]}')
-        # fetch C&C endpoint (in_queue and out_queue)
-        self.__command_and_steering_service_in_queue,\
-            self.__command_and_steering_service_out_queue =\
-            self.__command_and_control_service[0].endpoint
-        # initialize the Communicator object for communication via Queues
-        self.__communicator = CommunicatorQueue(self._log_settings,
-                                                self._configurations_manager)
-        # update global state to 'READY' assuming all components are already
-        # up and running with local state 'READY'. The assumption is anyway
-        # validated during the update process.
+
+        # 3. setup a communication channel with command control service
+        if self.__setup_channel_with_command_control_service() == Response.ERROR:
+            # terminate with ERROR
+            return Response.ERROR
+
+        # 4. initialize the Communicator object for communication via Queues
+        self.__setup_communicator()
+
+        # 5. update global state
         if self.__update_global_state() == Response.ERROR:
             self.__logger.critical('Error updating the global state.')
             return Response.ERROR
 
-        # start monitoring threads
+        # 6. start monitoring threads
         self.__start_global_health_monitoring()
+
+        # 7. all is setup now start orchestration
         return Response.OK
 
     def __terminate_with_error(self):
@@ -458,7 +602,7 @@ class Orchestrator(multiprocessing.Process):
                     f'{self.__health_registry_manager_proxy.current_global_state()}')
             # fetch the steering command
             current_steering_command = self.__communicator.receive(
-                                                self.__orchestrator_in_queue)
+                                                self.__endpoint_with_steering_service)
             self.__logger.debug(f'got the command {current_steering_command}')
             # execute the steering command
             if command_execution_choices[current_steering_command]() ==\
@@ -470,9 +614,12 @@ class Orchestrator(multiprocessing.Process):
                 except RuntimeError:
                     # log the exception with traceback
                     self.__logger.exception(
-                        f'error executing: {current_steering_command.name}')
+                        f'error executing: {current_steering_command}')
                 # terminate loudly with error
-                self.__orchestrator_out_queue.put(self.__terminate_with_error())
+                self.__communicator.send(
+                    self.__terminate_with_error(),
+                    self.__endpoint_with_steering_service)
+                # self.__orchestrator_out_queue.put()
                 return Response.ERROR
 
             # finish execution as normal after executing END command
@@ -491,12 +638,16 @@ class Orchestrator(multiprocessing.Process):
                 self.__logger.info('Global state transition history: '
                                    f'{global_state_transition_history}')
                 # finish execution as normal
-                self.__logger.info('Concluding orchestration.')
-                self.__orchestrator_out_queue.put(Response.OK)
+                self.__logger.info('Concluding orchestration')
+                # self.__orchestrator_out_queue.put(Response.OK)
+                self.__communicator.send(Response.OK,
+                                         self.__endpoint_with_steering_service)
                 return Response.OK
 
             # Execution is not yet ended, fetch the next steering commands
-            self.__orchestrator_out_queue.put(Response.OK)
+            # self.__orchestrator_out_queue.put(Response.OK)
+            self.__communicator.send(Response.OK,
+                                     self.__endpoint_with_steering_service)
             continue
 
     def current_global_state(self):
@@ -520,14 +671,14 @@ class Orchestrator(multiprocessing.Process):
         executes the steering and commands, and orchestrates the workflow.
         """
         # Setup runtime such as register with registry etc.
-        if self.__set_up_runtime() == Response.ERROR:
+        if self.__setup_runtime() == Response.ERROR:
             # NOTE exceptions are already logged at source of failure
             self.__logger.error('Setting up runtime failed, Quitting!.')
             # terminate with error
-            self.__orchestrator_out_queue.put(Response.ERROR)
+            self.__communicator.send(Response.ERROR,
+                                     self.__endpoint_with_steering_service)
+            # self.__orchestrator_out_queue.put(Response.ERROR)
             return Response.ERROR
 
         # Runtime setup is done, start orchestration
-        # self.__orchestrator_out_queue.put(self.__command_control_and_coordinate())
         return self.__command_control_and_coordinate()
-        # return 0
