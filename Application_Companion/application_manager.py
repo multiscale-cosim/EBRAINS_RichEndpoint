@@ -119,8 +119,10 @@ class ApplicationManager(multiprocessing.Process):
         """
         # NOTE: core 1 is bound to the application manager itself,
         # rest are bound to the main application.
-        bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
-                                     self.__legitimate_cpu_cores))
+       # bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
+        #                             self.__legitimate_cpu_cores))
+        bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
+                                     8))
         return self.__affinity_manager.set_affinity(pid, bind_with_cores)
 
     def __launch_application(self, application):
@@ -140,6 +142,9 @@ class ApplicationManager(multiprocessing.Process):
         # Turn-off output buffering for the child process
         os.environ['PYTHONUNBUFFERED'] = "1"
         # 1. run the application
+        self.__logger.info(f"__DEBUG__ action cmd:{application}")
+        strings = application
+        application=[x.strip() for x in strings if x.strip()]  # TODO later do it in parser
         try:
             self.__popen_process = subprocess.Popen(
                 application,
