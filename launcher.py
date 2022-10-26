@@ -201,6 +201,20 @@ class Launcher:
                 action,
                 self.__proxy_manager_connection_details,
                 self.__port_range_for_application_companions))
+        # cpu_range=[{'MIN':1, 'MAX':8},
+        #            {'MIN':9, 'MAX':15},
+        #            {'MIN':16, 'MAX':23},
+        #            {'MIN':24, 'MAX':32}]
+        # i = 0
+        # for action in actions:
+        #     application_companions.append(ApplicationCompanion(
+        #         self._log_settings,
+        #         self._configurations_manager,
+        #         action,
+        #         self.__proxy_manager_connection_details,
+        #         self.__port_range_for_application_companions,
+        #         bind_cpu=cpu_range[i]))
+        #         i += 1
 
         for application_companion in application_companions:
             self.__logger.info('setting up Application Companion.')
