@@ -145,6 +145,7 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger.info(f"__DEBUG__ action cmd:{application}")
         strings = application
         application=[x.strip() for x in strings if x.strip()]  # TODO later do it in parser
+        self.__logger.info(f"__DEBUG__ action cmd after stripping white space:{application}")
         try:
             self.__popen_process = subprocess.Popen(
                 application,
@@ -375,6 +376,8 @@ class ApplicationManager(multiprocessing.Process):
         try:
             # the index points to PID, the curly bracket {'PID'... therefore
             # starts at from index-2
+            self.__logger.debug("string response before converting to a"
+                                f"dictionary: {lines[index - 2:]}")
             self.__response_from_action = ast.literal_eval(lines[index - 2:])
             self.__action_pids.append(self.__response_from_action.get("PID"))
             self.__logger.info(f"got responses: {self.__response_from_action}")
