@@ -168,19 +168,23 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger.debug(f'<{self.__actions_id}> is launched.')
 
         # 2. set the affinity for the application
-        if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
-            # affinity could not be set, log exception with traceback
-            # NOTE: application is launched with no defined affinity mask
-            try:
-                # raise runtime exception
-                raise (RuntimeError)
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception(
-                    self.__logger,
-                    f'affinity could not be set for '
-                    f'<{self.__actions_id}>:'
-                    f'{self.__popen_process.pid}')
+
+        # NOTE disabling the functionality for hpc becuase it is set directly
+        # in 'srun' command given to subprocess.Popen
+
+        # if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
+        #     # affinity could not be set, log exception with traceback
+        #     # NOTE: application is launched with no defined affinity mask
+        #     try:
+        #         # raise runtime exception
+        #         raise (RuntimeError)
+        #     except RuntimeError:
+        #         # log the exception with traceback details
+        #         self.__logger.exception(
+        #             self.__logger,
+        #             f'affinity could not be set for '
+        #             f'<{self.__actions_id}>:'
+        #             f'{self.__popen_process.pid}')
 
         # Otherwise, everything goes right
         self.__logger.info(f'<{self.__actions_id}> starts execution')
