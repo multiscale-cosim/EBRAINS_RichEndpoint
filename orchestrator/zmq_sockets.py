@@ -29,14 +29,17 @@ class ZMQSockets:
                                         name=__name__,
                                         log_configurations=self._log_settings)
         self.__context = zmq.Context()
-        # linger time before closing the socket
-        self.__linger_time = 0  # set default as 0 i.e. to drop 
+        # linger period for pending messages
+        # NOTE setting default as 0 i.e. to discard immidiately when the socket is
+        # closed with zmq_close()
+        self.__linger_time = 0 
         self.__logger.debug("initialized")
     
     def create_socket(self, socket_type, receive_timeout=None):
         """
-        Creates a socket of the given socket_type and sets options such as
-        time out for waiting to receive a message.
+        Creates a socket of the given socket_type and sets its behavior such as
+        the maximum number of outstanding messages shall queue in memory for a
+        single peer, etc.
 
         Parameters
         ----------
@@ -53,7 +56,7 @@ class ZMQSockets:
             ZMQ socket created as of the given socket_type
         """
         socket = self.__context.socket(socket_type)
-        # set linger time
+        # Set linger period for socket shutdown
         socket.setsockopt(zmq.LINGER, self.__linger_time)
         # set high water mark to remove message dropping for inbound and
         # outbound messages
