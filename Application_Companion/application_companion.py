@@ -17,9 +17,10 @@ import signal
 import pickle
 import time
 import base64
-from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
+import zmq
 
 from common.utils import networking_utils
+
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import PUBLISHING_TOPIC
@@ -36,6 +37,7 @@ from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
+from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
 
 class ApplicationCompanion(multiprocessing.Process):
     """
@@ -157,7 +159,7 @@ class ApplicationCompanion(multiprocessing.Process):
             # create ZMQ endpoints
             zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
             # Endpoint with C&C service for receiving commands via a SUB socket
-            self.__subscription_endpoint_with_command_control = zmq_sockets.sub_socket()
+            self.__subscription_endpoint_with_command_control = zmq_sockets.create_socket(zmq.SUB)
             # connect with endpoint (PUB socket) of C&C service
             # fetch C&C endpoint <ip:port>
             command_and_steering_service_endpoint = self.__get_command_control_endpoint()
@@ -177,7 +179,7 @@ class ApplicationCompanion(multiprocessing.Process):
                                "to receive (broadcast) commands")
 
             # Endpoint with C&C for sending responses via a PUSH socket
-            self.__push_endpoint_with_command_control = zmq_sockets.push_socket()
+            self.__push_endpoint_with_command_control = zmq_sockets.create_socket(zmq.PUSH)
             self.__my_ip = networking_utils.my_ip()  # get IP address
             # bind PUSH socket to first available port in range for sending the
             # response, and get port bound to PUSH socket to communicate with

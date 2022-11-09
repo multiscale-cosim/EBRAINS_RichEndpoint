@@ -13,6 +13,7 @@
 import multiprocessing
 import os
 import signal
+import zmq 
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
@@ -428,9 +429,9 @@ class Orchestrator(multiprocessing.Process):
             # create ZMQ endpoints
             self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
             # Endpoint with CLI for receiving commands via a REP socket
-            self.__endpoint_with_steering_service = self.__zmq_sockets.rep_socket()
+            self.__endpoint_with_steering_service = self.__zmq_sockets.create_socket(zmq.REP)
             # Endpoint with C&C service for sending commands via a REQ socket
-            self.__endpoint_with_command_control_service = self.__zmq_sockets.req_socket()
+            self.__endpoint_with_command_control_service = self.__zmq_sockets.create_socket(zmq.REQ)
             # get IP address
             self.__my_ip = networking_utils.my_ip()
             # get the port bound to REP socket to communicate with Steering

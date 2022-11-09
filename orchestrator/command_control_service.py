@@ -13,8 +13,7 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
-from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
-# import socket
+import zmq
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, PUBLISHING_TOPIC
@@ -22,6 +21,7 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
@@ -102,10 +102,10 @@ class CommandControlService(multiprocessing.Process):
             # create ZMQ endpoints
             self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
             # Endpoint with Orchestrator via a REP socket
-            self.__rep_endpoint_with_orchestrator = self.__zmq_sockets.rep_socket()
+            self.__rep_endpoint_with_orchestrator = self.__zmq_sockets.create_socket(zmq.REP)
             # Endpoint with Application Companions for sending commands
             # via a PUB socket
-            self.__publish_endpoint_with_application_companions = self.__zmq_sockets.pub_socket()
+            self.__publish_endpoint_with_application_companions = self.__zmq_sockets.create_socket(zmq.PUB)
 
             self.__my_ip = networking_utils.my_ip()  # get IP address
 
@@ -228,7 +228,7 @@ class CommandControlService(multiprocessing.Process):
         # create a pull socket for receiving responses from Application
         # Companions
         self.__pull_endpoint_with_application_companions =\
-            self.__zmq_sockets.pull_socket()
+            self.__zmq_sockets.create_socket(zmq.PULL)
         self.__application_companions = self.__health_registry_manager_proxy.\
             find_all_by_category(
                             SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION)

@@ -29,34 +29,77 @@ class ZMQSockets:
                                         name=__name__,
                                         log_configurations=self._log_settings)
         self.__context = zmq.Context()
+        # linger time before closing the socket
+        self.__linger_time = 0  # set default as 0 i.e. to drop 
         self.__logger.debug("initialized")
+    
+    def create_socket(self, socket_type, receive_timeout=None):
+        """
+        Creates a socket of the given socket_type and sets options such as
+        time out for waiting to receive a message.
 
-    def req_socket(self, receive_timeout=None):
-        """creates and returns REQ socket type"""
-        socket = self.__context.socket(zmq.REQ)
+        Parameters
+        ----------
+        socket_type: zmq.Socket
+            The zmq socket type to be created
+        
+        receive_timeout: float
+            Maximum time before a recv operation returns with EAGAIN. Default
+            value is -1 i.e. it will block until a message is available
+
+        Returns
+        -------
+        socket: zmq.Socket
+            ZMQ socket created as of the given socket_type
+        """
+        socket = self.__context.socket(socket_type)
+        # set linger time
+        socket.setsockopt(zmq.LINGER, self.__linger_time)
+        # set high water mark to remove message dropping for inbound and
+        # outbound messages
+        socket.setsockopt(zmq.SNDHWM, 0)
+        socket.setsockopt(zmq.RCVHWM, 0)
+        try:
+            socket.setsockopt(zmq.IMMEDIATE, 1)
+        except:
+            # This parameter was recently added by new libzmq versions
+            pass
+        # set the maximum time before a recv operation returns with EAGAIN
         if receive_timeout is not None:
             socket.setsockopt(zmq.RCVTIMEO, receive_timeout)
-        return socket
+        # accept only routable messages on ROUTER sockets
+        if socket_type == zmq.ROUTER:
+            sock.setsockopt(zmq.ROUTER_MANDATORY, 1)
+        # all is set
+        self.__logger.info(f"__DEBUG__ created a 0MQ socket: {socket}")
+        return socket 
+    
+    # def req_socket(self, receive_timeout=None):
+    #     """creates and returns REQ socket type"""
+    #     socket = self.__context.socket(zmq.REQ)
+    #     if receive_timeout is not None:
+    #         socket.setsockopt(zmq.RCVTIMEO, receive_timeout)
+    #     return socket
 
-    def rep_socket(self):
-        """creates and returns REP socket type"""
-        return self.__context.socket(zmq.REP)
+    # def rep_socket(self):
+    #     """creates and returns REP socket type"""
+    #     return self.__context.socket(zmq.REP)
 
-    def push_socket(self):
-        """creates and returns PUSH socket type"""
-        return self.__context.socket(zmq.PUSH)
+    # def push_socket(self):
+    #     """creates and returns PUSH socket type"""
+    #     return self.__context.socket(zmq.PUSH)
 
-    def pull_socket(self):
-        """creates and returns PUSH socket type"""
-        return self.__context.socket(zmq.PULL)
+    # def pull_socket(self):
+    #     """creates and returns PUSH socket type"""
+    #     return self.__context.socket(zmq.PULL)
 
-    def pub_socket(self):
-        """creates and returns PUB socket type"""
-        return self.__context.socket(zmq.PUB)
+    # def pub_socket(self):
+    #     """creates and returns PUB socket type"""
+    #     return self.__context.socket(zmq.PUB)
 
-    def sub_socket(self):
-        """creates and returns PUB socket type"""
-        return self.__context.socket(zmq.SUB)
+    # def sub_socket(self):
+    #     """creates and returns PUB socket type"""
+    #     return self.__context.socket(zmq.SUB)
 
     def subscribe_to_topic(self, sub_socket, subscription_topic):
         """
