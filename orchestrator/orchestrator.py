@@ -13,6 +13,7 @@
 import multiprocessing
 import os
 import signal
+import zmq 
 
 from common.utils import networking_utils
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
@@ -68,9 +69,6 @@ class Orchestrator(multiprocessing.Process):
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
 
-        # flag to indicate whether Orchestrator is registered with registry
-        self.__is_registered = multiprocessing.Event()
-
         # instantiate the global health and status monitor
         self.__global_health_monitor = HealthStatusMonitor(
                                         self._log_settings,
@@ -87,9 +85,6 @@ class Orchestrator(multiprocessing.Process):
         self.__communicator = None
         # self.__communicator_zmq = None
         self.__logger.debug("Orchestrator is initialized.")
-
-    @property
-    def is_registered_in_registry(self): return self.__is_registered
 
     @property
     def steering_commands_history(self): return self.__steering_commands_history
@@ -392,8 +387,6 @@ class Orchestrator(multiprocessing.Process):
             return Response.ERROR
 
         # Case, registration is done
-        # indicate a successful registration
-        self.__is_registered.set()
         # retrieve proxy to registered component which is later needed to
         # update the states
         self.__orchestrator_registered_component =\
@@ -428,9 +421,9 @@ class Orchestrator(multiprocessing.Process):
             # create ZMQ endpoints
             self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
             # Endpoint with CLI for receiving commands via a REP socket
-            self.__endpoint_with_steering_service = self.__zmq_sockets.rep_socket()
+            self.__endpoint_with_steering_service = self.__zmq_sockets.create_socket(zmq.REP)
             # Endpoint with C&C service for sending commands via a REQ socket
-            self.__endpoint_with_command_control_service = self.__zmq_sockets.req_socket()
+            self.__endpoint_with_command_control_service = self.__zmq_sockets.create_socket(zmq.REQ)
             # get IP address
             self.__my_ip = networking_utils.my_ip()
             # get the port bound to REP socket to communicate with Steering

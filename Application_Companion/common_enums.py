@@ -26,6 +26,12 @@ class SteeringCommands(enum.IntEnum):
 
 
 @enum.unique
+class COMMANDS(enum.IntEnum):
+    """ Enum class for commands """
+    STEERING_COMMAND = 0
+    PARAMETERS = 1
+
+@enum.unique
 class Response(enum.IntEnum):
     """ Enum class for responses """
     # TODO: extend responses for different types of errors and for each module
@@ -51,6 +57,7 @@ class SERVICE_COMPONENT_CATEGORY(enum.IntEnum):
     COMMAND_AND_CONTROL = 2
     STEERING_SERVICE = 3
     INTERSCALE_HUB = 4
+    APPLICATION_MANAGER = 5
 
 
 @enum.unique

@@ -11,6 +11,8 @@
 #       Team: Multi-scale Simulation and Design
 #
 # ------------------------------------------------------------------------------
+import zmq
+
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
@@ -54,7 +56,7 @@ class POCSteeringMenu:
         # create ZMQ endpoint
         self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
         # Endpoint with C&C service for sending commands via a REQ socket
-        self.__endpoint_with_orchestrator = self.__zmq_sockets.req_socket()
+        self.__endpoint_with_orchestrator = self.__zmq_sockets.create_socket(zmq.REQ)
         # connect with endpoint (REP socket) of Orchestrator
         self.__endpoint_with_orchestrator.connect(
             f"tcp://"  # protocol
