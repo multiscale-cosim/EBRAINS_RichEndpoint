@@ -74,36 +74,9 @@ class ZMQSockets:
         if socket_type == zmq.ROUTER:
             sock.setsockopt(zmq.ROUTER_MANDATORY, 1)
         # all is set
-        self.__logger.info(f"__DEBUG__ created a 0MQ socket: {socket}")
+        self.__logger.debug(f"created a 0MQ socket: {socket}")
         return socket 
     
-    # def req_socket(self, receive_timeout=None):
-    #     """creates and returns REQ socket type"""
-    #     socket = self.__context.socket(zmq.REQ)
-    #     if receive_timeout is not None:
-    #         socket.setsockopt(zmq.RCVTIMEO, receive_timeout)
-    #     return socket
-
-    # def rep_socket(self):
-    #     """creates and returns REP socket type"""
-    #     return self.__context.socket(zmq.REP)
-
-    # def push_socket(self):
-    #     """creates and returns PUSH socket type"""
-    #     return self.__context.socket(zmq.PUSH)
-
-    # def pull_socket(self):
-    #     """creates and returns PUSH socket type"""
-    #     return self.__context.socket(zmq.PULL)
-
-    # def pub_socket(self):
-    #     """creates and returns PUB socket type"""
-    #     return self.__context.socket(zmq.PUB)
-
-    # def sub_socket(self):
-    #     """creates and returns PUB socket type"""
-    #     return self.__context.socket(zmq.SUB)
-
     def subscribe_to_topic(self, sub_socket, subscription_topic):
         """
         subscribes to a given topic to filter the messages on subscriber side

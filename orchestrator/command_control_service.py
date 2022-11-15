@@ -61,10 +61,6 @@ class CommandControlService(multiprocessing.Process):
         # Now, initialize the proxy to registry manager
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
-
-        # initialize the flag to indicate whether C&S service is registered
-        # with registry service
-        self.__is_registered = multiprocessing.Event()
         # initialize the Communicator object for communication via Queues
         self.__communicator = None
         # a list of application companions input queues proxies
@@ -83,9 +79,6 @@ class CommandControlService(multiprocessing.Process):
         self.__is_pull_connection_with_application_companion_made = False
 
         self.__logger.debug("C&S service initialized.")
-
-    @property
-    def is_registered_in_registry(self): return self.__is_registered
 
     def __setup_endpoints(self, ports_for_command_control_channel):
         # if the range of ports are not provided then use the shared queues
@@ -182,13 +175,9 @@ class CommandControlService(multiprocessing.Process):
                     os.getpid(),  # id
                     SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # name
                     SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL,  # category
-                    # (self.__command_and_steering_service_in_queue,  # endpoint
-                    #  self.__command_and_steering_service_out_queue),
-                    self.__endpoints_address,
+                    self.__endpoints_address,  # endpoint
                     SERVICE_COMPONENT_STATUS.UP,  # current status
                     None) == Response.OK):  # current state
-            # set flag to indicate a successful registration
-            self.__is_registered.set()
             self.__logger.debug('Command and steering service is registered.')
             return Response.OK
         else:
@@ -270,16 +259,19 @@ class CommandControlService(multiprocessing.Process):
         collects the responses from Application Companions and send them to
         Orchestrator.
         '''
-        responses = []  # temporary list for response collection
+        # setup channel with Application Companions to receive responses if it
+        # is not made yet
+        if self.__is_pull_connection_with_application_companion_made is False:
+            self.__setup_channel_receive_response_from_app_companion()
+            # set flag to indicate channel setup with Application Compnions
+            self.__is_pull_connection_with_application_companion_made = True
+        
         # collect responses
+        responses = []  # temporary list for response collection
         # for application_companion_out_queue in \
         #         self.__application_companions_out_queues:
         #     responses.append(self.__communicator.receive(
         #                     application_companion_out_queue))
-        if self.__is_pull_connection_with_application_companion_made is False:
-            # self.__setup_channeling_to_application_companions()
-            self.__setup_channel_receive_response_from_app_companion()
-            self.__is_pull_connection_with_application_companion_made = True
         for _ in self.__application_companions:
             responses.append(self.__communicator.receive(
                              self.__pull_endpoint_with_application_companions))                          
@@ -396,20 +388,6 @@ class CommandControlService(multiprocessing.Process):
                                         'not be registered. Quitting!')
             # terminate with ERROR
             return Response.ERROR
-
-        # 2. setup channels to application companions for communication
-        # if self.__setup_channeling_to_application_companions() ==\
-        #         Response.ERROR:
-        #     try:
-        #         # raise an exception
-        #         raise RuntimeError
-        #     except RuntimeError:
-        #         # log the exception with traceback
-        #         self.__logger.exception('fails to retrieve proxies to '
-        #                                 'Application Companions endpoints.'
-        #                                 ' Quitting!')
-        #     # terminate with ERROR
-        #     return Response.ERROR
 
         # 3. initialize communicator
         self.__setup_communicator()

@@ -69,9 +69,6 @@ class Orchestrator(multiprocessing.Process):
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
 
-        # flag to indicate whether Orchestrator is registered with registry
-        self.__is_registered = multiprocessing.Event()
-
         # instantiate the global health and status monitor
         self.__global_health_monitor = HealthStatusMonitor(
                                         self._log_settings,
@@ -88,9 +85,6 @@ class Orchestrator(multiprocessing.Process):
         self.__communicator = None
         # self.__communicator_zmq = None
         self.__logger.debug("Orchestrator is initialized.")
-
-    @property
-    def is_registered_in_registry(self): return self.__is_registered
 
     @property
     def steering_commands_history(self): return self.__steering_commands_history
@@ -393,8 +387,6 @@ class Orchestrator(multiprocessing.Process):
             return Response.ERROR
 
         # Case, registration is done
-        # indicate a successful registration
-        self.__is_registered.set()
         # retrieve proxy to registered component which is later needed to
         # update the states
         self.__orchestrator_registered_component =\
