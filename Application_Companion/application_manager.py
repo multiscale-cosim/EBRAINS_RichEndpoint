@@ -176,9 +176,9 @@ class ApplicationManager(multiprocessing.Process):
         # Turn-off output buffering for the child process
         os.environ['PYTHONUNBUFFERED'] = "1"
         # 1. run the application
-        strings = application
-        application=[x.strip() for x in strings if x.strip()]  # TODO later do it in parser
-        self.__logger.debug(f"action cmd after stripping white space:{application}")
+        # strings = application
+        # application=[x.strip() for x in strings if x.strip()]  # TODO later do it in parser
+        self.__logger.debug(f"launching action:{application}")
         try:
             self.__popen_process = subprocess.Popen(
                 application,
