@@ -24,9 +24,12 @@ class SteeringMenuCLIHandler:
     def __init__(self) -> None:
         self.__steering_menu_cli = SteeringMenuCLI()
         self.__current_choice = None
-
+    
     @property
     def current_selection(self): return self.__current_choice
+    
+    @property
+    def all_steering_commands(self): return self.__steering_menu_cli.steering_menu_items
 
     def display_steering_menu(self):
         print('\n'+'*' * 33, flush=True)

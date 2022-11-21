@@ -28,9 +28,11 @@ class POCSteeringMenu:
                  configurations_manager,
                  orchestrator_in_queue,
                  orchestrator_out_queue,
-                 communicate_via_zmqs = False):
+                 communicate_via_zmqs = False,
+                 is_interactive = False):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
+        self._is_interactive = is_interactive
         self.__logger = self._configurations_manager.load_log_configurations(
                                         name=__name__,
                                         log_configurations=self._log_settings)
@@ -160,8 +162,9 @@ class POCSteeringMenu:
     
     def start_steering(self):
         '''
-        starts the steering menu handler to execute the user choice
-        steering command.
+        starts the steering menu handler 
+        - if interactive: display steering menu and execute the user choice
+        - if non interactive: execute steering commands automatically
 
         Parameters
         ----------
@@ -173,7 +176,7 @@ class POCSteeringMenu:
         response code as int
         '''
         # needed to check later if user enters a valid menu choice
-        self.__current_legitimate_choice = 1
+        self.__current_legitimate_choice = 1 # 1 = INIT, 2 = START, ...
 
         # Step 1. send INIT command to Orchestrator
         # NOTE INIT is a system action and thus is done implicitly
@@ -187,34 +190,49 @@ class POCSteeringMenu:
             return self.__terminate_with_error('Error executing INIT command. '
                                                'Quitting!')
 
-        # Case, INIT is done successfully
-        user_choice = 0
+        # Step 2. non-system actions
+        # Step 2a. interactive mode with steering menu
+        if self._is_interactive:
+            user_choice = 0
+            while True:
+                # increment the index of currently valid menu choice
+                self.__current_legitimate_choice += 1
+                # display steering commands menu
+                self.__steering_menu_handler.display_steering_menu()
+                # get the user input
+                user_choice = self.__steering_menu_handler.get_user_choice()
+                user_choice += 1  # add 1 because INIT=1 is already done as a system action
+                # parse user choice
+                user_choice =\
+                  self.__steering_menu_handler.parse_user_choice(user_choice)
+                # terminate if current choice is 'Exit'
+                if user_choice == SteeringCommands.EXIT:
+                    print(f'Steering command history: '
+                       f'{self.__steering_commands_history}')
+                    print("Exiting...")
+                    break
 
-        # Step 2. start receiving steering from user
-        while True:
-            # increment the index of currently valid menu choice
-            self.__current_legitimate_choice += 1
-            # display steering commands menu
-            self.__steering_menu_handler.display_steering_menu()
-            # get the user input
-            user_choice = self.__steering_menu_handler.get_user_choice()
-            user_choice += 1  # because INIT is already done as a system action
-            # parse user choice
-            user_choice =\
-                self.__steering_menu_handler.parse_user_choice(user_choice)
-            # terminate if user choice is 'Exit'
-            if user_choice == SteeringCommands.EXIT:
-                print(f'Steering command history: '
-                      f'{self.__steering_commands_history}')
-                print("Exiting...")
-                break
+                # Otherwise, execute the steering command if it is a valid
+                # menu choice
+                response = self.__execute_if_validated(user_choice)
+                if response == Response.NOT_VALID_COMMAND:
+                    print('Not a valid choice. The valid choices are: [1-3]')
+                    continue
+        # Step 2b. non interactive mode, execute menu items in order
+        else:
+            # NOTE assumes only non-system actions and correct order/enum in menu
+            # e.g. SteeringCommands.START=2, END=3, EXIT=4, ...
+            for current_choice in self.__steering_menu_handler.all_steering_commands:
+                # SAFETY check: increment the index of currently valid menu choice
+                self.__current_legitimate_choice += 1
+                response = self.__execute_if_validated(current_choice)
+                # no check if response==Response.NOT_VALID_COMMAND here.
+                # terminate if current_choice is 'Exit'
+                if current_choice == SteeringCommands.EXIT:
+                    print(f'Steering command history: '
+                        f'{self.__steering_commands_history}')
+                    print("Exiting...")
+                    break # if EXIT is not already the last menu item
 
-            # Otherwise, execute the steering command if it is a valid
-            # menu choice
-            response = self.__execute_if_validated(user_choice)
-            if response == Response.NOT_VALID_COMMAND:
-                print('Not a valid choice. The valid choices are: [1-3]')
-                continue
-
-        # user opted for 'EXIT', terminate the steering menu
+        # SteeringCommands.EXIT executed --> terminate the steering (menu)
         return Response.OK
