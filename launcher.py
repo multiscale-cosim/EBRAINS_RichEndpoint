@@ -248,10 +248,13 @@ class Launcher:
 
         # 4. launch the Steering Menu Handler
         # NOTE: this is to demonstrate the POC of steering via CLI
+        # TODO this POC handles both, interactive and non interactive steering
+        # -> refactor/rename to represent both -> generic steering
         poc_steering_menu = POCSteeringMenu(self._log_settings,
                                             self._configurations_manager,
                                             orchestrator_in_queue_proxy,
                                             orchestrator_out_queue_proxy,
-                                            communicate_via_zmqs=True)
+                                            communicate_via_zmqs=True,
+                                            is_interactive=False)
         poc_steering_menu.start_steering()
         return Response.OK
