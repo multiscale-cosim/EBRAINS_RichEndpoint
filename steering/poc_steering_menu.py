@@ -175,6 +175,11 @@ class POCSteeringMenu:
         ------
         response code as int
         '''
+        # TODO: add check if all components (0,1,2) are registered with registry service
+        # App_manager=5 is checked within app_companion=0
+        # -> future (hpc)launcher does not do the check
+        # TODO 2: rename/refactor this POC_steering_menu to a proper service (generic command & steering)
+        
         # needed to check later if user enters a valid menu choice
         self.__current_legitimate_choice = 1 # 1 = INIT, 2 = START, ...
 
@@ -223,16 +228,17 @@ class POCSteeringMenu:
             # NOTE assumes only non-system actions and correct order/enum in menu
             # e.g. SteeringCommands.START=2, END=3, EXIT=4, ...
             for current_choice in self.__steering_menu_handler.all_steering_commands:
-                # SAFETY check: increment the index of currently valid menu choice
-                self.__current_legitimate_choice += 1
-                response = self.__execute_if_validated(current_choice)
-                # no check if response==Response.NOT_VALID_COMMAND here.
                 # terminate if current_choice is 'Exit'
                 if current_choice == SteeringCommands.EXIT:
                     print(f'Steering command history: '
                         f'{self.__steering_commands_history}')
                     print("Exiting...")
                     break # if EXIT is not already the last menu item
+
+                # SAFETY check: increment the index of currently valid menu choice
+                self.__current_legitimate_choice += 1
+                response = self.__execute_if_validated(current_choice)
+                # no check if reponse==Response.NOT_VALID_COMMAND
 
         # SteeringCommands.EXIT executed --> terminate the steering (menu)
         return Response.OK
