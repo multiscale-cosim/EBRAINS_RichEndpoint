@@ -77,7 +77,7 @@ class SteeringService:
         registry, initialize the Communicator object, etc.
         """
         # register with registry
-        if (self.__health_registry_manager_proxy.register(
+        if (self.__registry_manager_proxy.register(
             os.getpid(), # id
             SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE, # name
             SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE, # category
