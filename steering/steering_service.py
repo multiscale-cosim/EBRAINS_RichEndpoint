@@ -115,7 +115,7 @@ class SteeringService:
             self.__orchestrator_out_queue = orchestrator_out_queue
         else:
             orchestrator_endpoint = \
-                self.__orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
+                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
             # create communicator and set up channels with orchestrator
             self.__communicator = CommunicatorZMQ(self._log_settings,
                                                   self._configurations_manager)
