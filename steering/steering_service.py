@@ -112,7 +112,7 @@ class SteeringService:
             find_all_by_category(target_components_category)
         self.__logger.debug(
                 f'found {len(components)} component(s) \
-                in category {target_component_category}')
+                in category {target_components_category}')
         return components
 
     def __setup_channel_with_orchestrator(self, ports_for_cc_channel, communicate_via_zmqs):
