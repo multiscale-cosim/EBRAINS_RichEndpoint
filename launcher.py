@@ -144,9 +144,9 @@ class Launcher:
             application_companion.terminate()
             application_companion.join()
 
-    def __terminate_command_and_control_service(self, cc_service):
-        cc_service.terminate()
-        cc_service.join()
+    def __terminate_launched_component(self, component):
+        component.terminate()
+        component.join()
 
     def __log_exception_and_terminate_with_error(self, error_summary):
         """
@@ -213,7 +213,7 @@ class Launcher:
             if self.__get_proxy_to_registered_component(
                     SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION) is None:
                 # terminate Command&Control service
-                self.__terminate_command_and_control_service(cc_service)
+                self.__terminate_launched_component(cc_service)
                 # log exception with traceback and terminate with error
                 self.__log_exception_and_terminate_with_error(
                     f'{application_companion} is not yet registered')
@@ -226,11 +226,10 @@ class Launcher:
                                     self.__port_range_for_orchestrator)
         orchestrator.start()
         # check if Orchestrator is already registered with registry
-        orchestrator_component = self.__get_proxy_to_registered_component(
-            SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
-        if orchestrator_component is None:
+        if self.__get_proxy_to_registered_component(
+                SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR) is None:
             # terminate Command and Control service
-            self.__terminate_command_and_control_service(cc_service)
+            self.__terminate_launched_component(cc_service)
             # terminate Application Companions
             self.__terminate_application_companions(application_companions)
             # log exception with traceback and terminate with error
@@ -243,9 +242,20 @@ class Launcher:
         steering_service = SteeringService(self._log_settings,
                                             self._configurations_manager,
                                             self.__proxy_manager_connection_details,
-                                            self.__ports_for_command_control_channel,
-                                            len(application_companions),
-                                            communicate_via_zmqs=True,
+                                            is_communicate_via_zmqs=True,
                                             is_interactive=False)
+        # check if steering service is already registered with registry
+        if self.__get_proxy_to_registered_component(
+                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE) is None:
+            # terminate Command and Control service
+            self.__terminate_launched_component(cc_service)
+            # terminate Application Companions
+            self.__terminate_application_companions(application_companions)
+            # terminate Orchestrator
+            self.__terminate_launched_component(orchestrator)
+            # log exception with traceback and terminate with error
+            self.__log_exception_and_terminate_with_error(
+                'Steering Service is not yet registered')
+        
         steering_service.start_steering()
         return Response.OK
