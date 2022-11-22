@@ -22,7 +22,7 @@ from EBRAINS_RichEndpoint.orchestrator.command_control_service import CommandCon
 from EBRAINS_RichEndpoint.orchestrator.orchestrator import Orchestrator
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from EBRAINS_RichEndpoint.steering.poc_steering_menu import POCSteeringMenu
+from EBRAINS_RichEndpoint.steering.steering_service import SteeringService
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
@@ -144,9 +144,9 @@ class Launcher:
             application_companion.terminate()
             application_companion.join()
 
-    def __terminate_command_and_control_service(self, steering_service):
-        steering_service.terminate()
-        steering_service.join()
+    def __terminate_command_and_control_service(self, cc_service):
+        cc_service.terminate()
+        cc_service.join()
 
     def __log_exception_and_terminate_with_error(self, error_summary):
         """
@@ -173,15 +173,18 @@ class Launcher:
         '''
         # determine network delay
         self.__latency = self.__compute_latency()
+        
+        #TODO remove checks if components are registered -> done by steering_service now
+        # new reponsibility for termination of applications? 
 
         # 1. launch Command&Control service
         self.__logger.info('setting up Command and Control service.')
-        steering_service = CommandControlService(
+        cc_service = CommandControlService(
             self._log_settings,
             self._configurations_manager,
             self.__proxy_manager_connection_details,
             self.__port_range_for_command_control)
-        steering_service.start()
+        cc_service.start()
 
         # check if Command&Control is already registered with registry
         if self.__get_proxy_to_registered_component(
@@ -210,7 +213,7 @@ class Launcher:
             if self.__get_proxy_to_registered_component(
                     SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION) is None:
                 # terminate Command&Control service
-                self.__terminate_command_and_control_service(steering_service)
+                self.__terminate_command_and_control_service(cc_service)
                 # log exception with traceback and terminate with error
                 self.__log_exception_and_terminate_with_error(
                     f'{application_companion} is not yet registered')
@@ -225,36 +228,24 @@ class Launcher:
         # check if Orchestrator is already registered with registry
         orchestrator_component = self.__get_proxy_to_registered_component(
             SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
-        # Case a: Orchestrator is not yet registered
         if orchestrator_component is None:
             # terminate Command and Control service
-            self.__terminate_command_and_control_service(steering_service)
+            self.__terminate_command_and_control_service(cc_service)
             # terminate Application Companions
             self.__terminate_application_companions(application_companions)
             # log exception with traceback and terminate with error
             self.__log_exception_and_terminate_with_error(
                 'Orchestrator is not yet registered')
 
-        # Case b: Orchestrator is already registered
-        # get orchestrator endpoints for communication
-        if self.__ports_for_command_control_channel is None:
-            orchestrator_in_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
-            orchestrator_out_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL]
-        else:
-            orchestrator_in_queue_proxy = orchestrator_out_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
-
-        # 4. launch the Steering Menu Handler
-        # NOTE: this is to demonstrate the POC of steering via CLI
+        # 4. launch the Steering Service
         # TODO this POC handles both, interactive and non interactive steering
         # -> refactor/rename to represent both -> generic steering
-        poc_steering_menu = POCSteeringMenu(self._log_settings,
+        steering_service = SteeringService(self._log_settings,
                                             self._configurations_manager,
-                                            orchestrator_in_queue_proxy,
-                                            orchestrator_out_queue_proxy,
+                                            self.__proxy_manager_connection_details,
+                                            self.__ports_for_command_control_channel,
+                                            len(application_companions),
                                             communicate_via_zmqs=True,
                                             is_interactive=False)
-        poc_steering_menu.start_steering()
+        steering_service.start_steering()
         return Response.OK
