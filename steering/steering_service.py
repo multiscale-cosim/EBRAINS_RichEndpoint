@@ -130,7 +130,7 @@ class SteeringService:
                 f"{orchestrator_endpoint.port}"  # port
                 )
             self.__logger.info("C&C channel - connected with Orchestrator to send "
-                           f"commands at {orchestrator_in_queue.IP}:{orchestrator_in_queue.port}")
+                           f"commands at {orchestrator_endpoint.IP}:{orchestrator_endpoint.port}")
             self.__orchestrator_in_queue = self.__orchestrator_out_queue = req_endpoint_with_orchestrator
         return Response.OK
 
