@@ -16,18 +16,21 @@ import zmq
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
 from EBRAINS_RichEndpoint.steering.steering_menu_handler import SteeringMenuCLIHandler
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 
 
-class POCSteeringMenu:
+class SteeringService:
     '''demonstrates the POC of steering via CLI.'''
     def __init__(self, log_settings,
                  configurations_manager,
-                 orchestrator_in_queue,
-                 orchestrator_out_queue,
+                 proxy_manager_connection_details,
+                 ports_for_cc_channel,
+                 num_app_companions,
                  communicate_via_zmqs = False,
                  is_interactive = False):
         self._log_settings = log_settings
@@ -40,33 +43,120 @@ class POCSteeringMenu:
         self.__current_legitimate_choice = 0
         self.__steering_menu_handler = SteeringMenuCLIHandler()
         
-        if communicate_via_zmqs:  # communicate via 0MQs
-            self.__communicator = CommunicatorZMQ(log_settings,
-                                                  configurations_manager)
-            self.__setup_channel_with_orchestrator(orchestrator_in_queue)
-            self.__orchestrator_in_queue = self.__orchestrator_out_queue = self.__endpoint_with_orchestrator
+        # 1) get proxy to registry manager
+        self.__connect_to_registry_manager(proxy_manager_connection_details)
         
+        # 2) check if all necessary components are registered
+        self.__check_registered_components(num_app_companions)
+        
+        # 3) set up communication channels with orchestrator
+        self.__setup_channel_with_orchestrator(ports_for_cc_channel, communicate_via_zmqs)
+       
+        self.__logger.debug('steering service initialized.')
+    
+    def __connect_to_registry_manager(self,proxy_manager_connection_details):
+        """ needed to check if all necessary components are registered """
+        # get client to Proxy Manager Server
+        proxy_manager_client = ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        proxy_manager_client.connect(
+            proxy_manager_connection_details["IP"],
+            proxy_manager_connection_details["PORT"],
+            proxy_manager_connection_details["KEY"],
+        )   
+        # get proxy to registry manager
+        self.__registry_manager_proxy = proxy_manager_client.get_registry_proxy()
+        return Response.OK
+    
+    def __check_registered_components(self,num_app_comp):
+        """
+        Check if registered with registry service:
+        APPLICATION_COMPANION (one per action), ORCHESTRATOR, COMMAND_AND_CONTROL
+        APPLICATION_MANAGER is checked within app.companion
+        """
+        if len(self.__get_component_from_registry(
+                SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION)) < num_app_comp:
+            self.__logger.exception('Not all Application Companions are yet registered')
+        # orchestrator component needed for c&c channel setup
+        self.__orchestrator_component = self.__get_component_from_registry(
+                SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
+        if self.__orchestrator_component is None:
+            self.__logger.exception('ORCHESTRATOR is not yet registered')
+        if self.__get_component_from_registry(
+                SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
+            self.__logger.exception('Command&Control service is not yet registered')
+        # all necessary components registered
+        self.__logger.debug('all necessary components registered')
+        return Response.OK
+
+    def __get_component_from_registry(self, target_components_category) -> list:
+        """
+        helper function for retrieving the proxy of registered components by
+        category.
+        Parameters
+        ----------
+        target_components_category : SERVICE_COMPONENT_CATEGORY.Enum
+            Category of target service components
+        Returns
+        ------
+        components: list
+            list of components matches category with parameter
+            target_components_category
+        """
+        #TODO implement retry-loop and timeout --> see previous check in launcher.py
+        components = self.__registry_manager_proxy.\
+            find_all_by_category(target_components_category)
+        self.__logger.debug(
+                f'found {len(components)} component(s) \
+                in category {target_component_category}')
+        return components
+
+    def __setup_channel_with_orchestrator(self, ports_for_cc_channel, communicate_via_zmqs):
+        """
+        Set orchestrator endpoints for communication. Requires registered orchestrator component.
+        setup C&C channels with orchestrator, ZMQ or shared queues.
+        Parameters
+        ----------
+        ports_for_cc_channel : dict
+            portrange values, read/set by launcher
+        communicate_via_zmqs: bool
+            determines type of communication/steering channel
+        """
+        # set in- and out-queue
+        if ports_for_cc_channel is None:
+            orchestrator_in_queue = \
+                self.__orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
+            orchestrator_out_queue = \
+                self.__orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL]
+        else:
+            orchestrator_in_queue = orchestrator_out_queue = \
+                self.__orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
+        # create communicator and set up channels with orchestrator
+        if communicate_via_zmqs:  # communicate via 0MQs
+            self.__communicator = CommunicatorZMQ(self._log_settings,
+                                                  self._configurations_manager)
+            # create ZMQ endpoint
+            zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+            # Endpoint with C&C service for sending commands via a REQ socket
+            endpoint_with_orchestrator = zmq_sockets.create_socket(zmq.REQ)
+            # connect with endpoint (REP socket) of Orchestrator
+            endpoint_with_orchestrator.connect(
+                f"tcp://"  # protocol
+                f"{orchestrator_in_queue.IP}:"  # ip
+                f"{orchestrator_in_queue.port}"  # port
+                )
+            self.__logger.info("C&C channel - connected with Orchestrator to send "
+                           f"commands at {orchestrator_in_queue.IP}:{orchestrator_in_queue.port}")
+            self.__orchestrator_in_queue = self.__orchestrator_out_queue = endpoint_with_orchestrator
         else:  # communicate via shared queues
-            self.__communicator = CommunicatorQueue(log_settings,
-                                                    configurations_manager)
+            self.__communicator = CommunicatorQueue(self._log_settings,
+                                                    self._configurations_manager)
             self.__orchestrator_in_queue = orchestrator_in_queue
             self.__orchestrator_out_queue = orchestrator_out_queue
-       
-        self.__logger.debug('initialized.')
-
-    def __setup_channel_with_orchestrator(self, address):
-        # create ZMQ endpoint
-        self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
-        # Endpoint with C&C service for sending commands via a REQ socket
-        self.__endpoint_with_orchestrator = self.__zmq_sockets.create_socket(zmq.REQ)
-        # connect with endpoint (REP socket) of Orchestrator
-        self.__endpoint_with_orchestrator.connect(
-            f"tcp://"  # protocol
-            f"{address.IP}:"  # ip
-            f"{address.port}"  # port
-            )
-        self.__logger.info("C&C channel - connected with Orchestrator to send "
-                           f"commands at {address.IP}:{address.port}")
         return Response.OK
 
     def __get_steering_menu_item(self, command):
@@ -175,13 +265,6 @@ class POCSteeringMenu:
         ------
         response code as int
         '''
-        # TODO: add check if all components (0,1,2) are registered with registry service
-        # App_manager=5 is checked within app_companion=0
-        # -> future (hpc)launcher does not do the check
-        # TODO 2: rename/refactor this POC_steering_menu to a proper service (generic command & steering)
-        
-        # needed to check later if user enters a valid menu choice
-        self.__current_legitimate_choice = 1 # 1 = INIT, 2 = START, ...
 
         # Step 1. send INIT command to Orchestrator
         # NOTE INIT is a system action and thus is done implicitly
@@ -194,8 +277,9 @@ class POCSteeringMenu:
             # terminate with error
             return self.__terminate_with_error('Error executing INIT command. '
                                                'Quitting!')
-
+        
         # Step 2. non-system actions
+        self.__current_legitimate_choice = 1 # currently: 1 = INIT
         # Step 2a. interactive mode with steering menu
         if self._is_interactive:
             user_choice = 0
