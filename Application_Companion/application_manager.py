@@ -19,6 +19,9 @@ import time
 import signal
 import fcntl
 import ast
+import zmq
+
+from common.utils import networking_utils
 
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
@@ -26,10 +29,17 @@ from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_S
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import MONITOR
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_INTERSCALEHUB_APPLICATION as INTERSCALEHUB
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands, COMMANDS
 from EBRAINS_RichEndpoint.Application_Companion.db_manager_file import DBManagerFile
 from EBRAINS_RichEndpoint.Application_Companion.affinity_manager import AffinityManager
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
+from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
+from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
+from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
+from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.default_directories_enum import DefaultDirectories
 
@@ -40,16 +50,15 @@ class ApplicationManager(multiprocessing.Process):
     ii). Monitors its resource usage, and
     iii) Save the monitoring data to files.
     """
-
     def __init__(self,
                  # Dependency Injection for setting up the uniform log settings
                  log_settings, configurations_manager,
                  # actions (applications) to be launched
                  actions,
-                 # proxy to shared queue for receiving the commands
-                 am_in_queue,
-                 # proxy to shared queue for sending the responses
-                 am_out_queue,
+                 # connection detials of Registry Proxy Manager
+                 proxy_manager_connection_details,
+                 # range of ports for Application Manager
+                 port_range_for_application_manager,
                  # flag to enable/disable resource usage monitoring
                  enable_resource_usage_monitoring=True):
         multiprocessing.Process.__init__(self)
@@ -58,8 +67,31 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger = self._configurations_manager.load_log_configurations(
             name=__name__,
             log_configurations=self._log_settings)
-        self.__application_manager_in_queue = am_in_queue
-        self.__application_manager_out_queue = am_out_queue
+
+        # get client to Proxy Manager Server
+        self._proxy_manager_client = ProxyManagerClient(
+            self._log_settings,
+            self._configurations_manager)
+
+        # Connect with Proxy Manager Server
+        # NOTE: it terminates with RuntimeError if connection could ne be made
+        # for whatever reasons
+        self._proxy_manager_client.connect(
+            proxy_manager_connection_details["IP"],
+            proxy_manager_connection_details["PORT"],
+            proxy_manager_connection_details["KEY"],
+        )
+
+        # Now, get the proxy to registry manager
+        self.__health_registry_manager_proxy =\
+            self._proxy_manager_client.get_registry_proxy()
+
+       
+       # range of ports for Application Manager
+        self.__port_range_for_application_manager = port_range_for_application_manager
+        self.__application_manager_in_queue = None
+        self.__application_manager_out_queue = None
+        self.__rep_endpoint_with_application_companion = None
         self.__actions = actions
         self.__actions_id = None
         self.__application = None
@@ -98,8 +130,10 @@ class ApplicationManager(multiprocessing.Process):
         self.__popen_process = None
         self.__resource_usage_monitors = []
         self.__exit_status = None
+        self.__endpoints_address = None
         self.__response_from_action = []
         self.__action_pids = []
+        self.__am_registered_component_service = None
 
         self.__logger.debug("Application Manager is initialized.")
 
@@ -119,8 +153,10 @@ class ApplicationManager(multiprocessing.Process):
         """
         # NOTE: core 1 is bound to the application manager itself,
         # rest are bound to the main application.
-        bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
-                                     self.__legitimate_cpu_cores))
+       # bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
+        #                             self.__legitimate_cpu_cores))
+        bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
+                                     8))
         return self.__affinity_manager.set_affinity(pid, bind_with_cores)
 
     def __launch_application(self, application):
@@ -140,6 +176,9 @@ class ApplicationManager(multiprocessing.Process):
         # Turn-off output buffering for the child process
         os.environ['PYTHONUNBUFFERED'] = "1"
         # 1. run the application
+        # strings = application
+        # application=[x.strip() for x in strings if x.strip()]  # TODO later do it in parser
+        self.__logger.debug(f"launching action:{application}")
         try:
             self.__popen_process = subprocess.Popen(
                 application,
@@ -162,19 +201,23 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger.debug(f'<{self.__actions_id}> is launched.')
 
         # 2. set the affinity for the application
-        if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
-            # affinity could not be set, log exception with traceback
-            # NOTE: application is launched with no defined affinity mask
-            try:
-                # raise runtime exception
-                raise (RuntimeError)
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception(
-                    self.__logger,
-                    f'affinity could not be set for '
-                    f'<{self.__actions_id}>:'
-                    f'{self.__popen_process.pid}')
+
+        # NOTE disabling the functionality for hpc becuase it is set directly
+        # in 'srun' command given to subprocess.Popen
+
+        # if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
+        #     # affinity could not be set, log exception with traceback
+        #     # NOTE: application is launched with no defined affinity mask
+        #     try:
+        #         # raise runtime exception
+        #         raise (RuntimeError)
+        #     except RuntimeError:
+        #         # log the exception with traceback details
+        #         self.__logger.exception(
+        #             self.__logger,
+        #             f'affinity could not be set for '
+        #             f'<{self.__actions_id}>:'
+        #             f'{self.__popen_process.pid}')
 
         # Otherwise, everything goes right
         self.__logger.info(f'<{self.__actions_id}> starts execution')
@@ -200,15 +243,9 @@ class ApplicationManager(multiprocessing.Process):
         # start monitoring
         # Case a, monitoring could not be started
         if resource_usage_monitor.start_monitoring() == Response.ERROR:
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception(
+            return self.__terminate_with_error_loudly(
                     f'Could not start monitoring for <{self.__actions_id}>: '
                     f'{pid}')
-                return Response.ERROR
 
         # Case b: monitoring starts
         self.__logger.debug("started monitoring the resource usage.")
@@ -245,17 +282,9 @@ class ApplicationManager(multiprocessing.Process):
             exit_status = self.__popen_process.poll()
             # Worst Case, process could not be terminated/killed
             if exit_status is None:
-                try:
-                    # raise runtime exception
-                    raise (RuntimeError)
-                except RuntimeError:
-                    # log the exception with traceback details
-                    self.__logger.exception(
-                        self.__logger,
+                return self.__terminate_with_error_loudly(
                         f"could not terminate the process "
                         f"PID={self.__popen_process.pid}")
-                # send response to terminate with error
-                return Response.ERROR
 
             # Case, process is terminated/killed
             self.__logger.info(f"terminated PID={self.__popen_process.pid}"
@@ -370,6 +399,8 @@ class ApplicationManager(multiprocessing.Process):
         try:
             # the index points to PID, the curly bracket {'PID'... therefore
             # starts at from index-2
+            self.__logger.debug("string response before converting to a"
+                                f"dictionary: {lines[index - 2:]}")
             self.__response_from_action = ast.literal_eval(lines[index - 2:])
             self.__action_pids.append(self.__response_from_action.get("PID"))
             self.__logger.info(f"got responses: {self.__response_from_action}")
@@ -527,7 +558,7 @@ class ApplicationManager(multiprocessing.Process):
 
     def __post_processing(self):
         """
-        helper function to post process after application execution.
+        helper function to post process after application execution ends.
 
         Parameters
         ----------
@@ -543,13 +574,7 @@ class ApplicationManager(multiprocessing.Process):
         if self.__is_monitoring_enabled:
             if self.__conclude_resource_usage_monitoring() == Response.ERROR:
                 # Case a, Post processing fails
-                try:
-                    # raise runtime exception
-                    raise RuntimeError
-                except RuntimeError:
-                    # log the exception with traceback details
-                    self.__logger.exception('post processing fails.')
-                return Response.ERROR
+                return self.__terminate_with_error_loudly("post processing fails")
 
         # Case b, post-processing is done
         self.__logger.info('post processing is done.')
@@ -571,77 +596,81 @@ class ApplicationManager(multiprocessing.Process):
 
     def __send_response_to_application_companion(self, response):
         """
-        sends response to Orchestrator as a result of Steering Command
+        sends response to Application Companion
         execution.
 
         Parameters
         ----------
         response : ...
-            response to be sent to Orchestrator
+            response to be sent to Application Companion
 
         Returns
         ------
             return code as int
         """
         self.__logger.debug(f"sending {response} to Application Companion.")
+        # return self.__communicator.send(
+        #     response, self.__application_manager_out_queue)
         return self.__communicator.send(
-            response, self.__application_manager_out_queue)
+            response, self.__rep_endpoint_with_application_companion)
 
-    def __execute_init_command(self):
+    def __execute_init_command(self, action):
         """
-        1. Executes INIT steering command by launching the application.
+        Executes INIT steering command by launching the application.
 
         NOTE INIT of application (initialization of buffers, network,
         local minimum delay, etc.) is a system action and is done implicitly
-        with launching.
-
-        2. Receives the local step size from the simulator and sends it to the
-        Orchestrator via Application Companion.
+        after launching.
         """
+        # get actions to be executed
+        self.__actions = action
+        self.__logger.debug(f"actions: {self.__actions}")
+        # 5. fetch the application to be executed
+        try:
+            self.__application = self.__actions.get('action')
+            self.__logger.debug(f"application: {self.__application}")
+        except KeyError:
+            # 'action' could not be found in 'actions' dictionary
+            # log the exception with traceback
+            self.__logger.exception("'action is not a valid key.")
+            return Response.ERROR
+        
+        # 1. update local state
+        # NOTE The state is already transited to 'SYNCHRONIZING' with the
+        # state transition of Aapplication Companion
+        self.__logger.debug("state is already updated by Application Companion")
+
+        # 2. get proxy to update the states later in registry
+        self.__am_registered_component_service = (
+            self.__health_registry_manager_proxy.find_by_id(os.getpid())
+        )
+        self.__logger.debug(
+            "component service id: "
+            f"{self.__am_registered_component_service.id};"
+            f"name: {self.__am_registered_component_service.name}"
+        )
+
         # 1. Launch application
         if self.__launch_application(self.__application) == Response.ERROR:
             # Case a, could not launch the application
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception('Launching is failed. Quitting!')
             # send error as response to Application Companion
             self.__send_response_to_application_companion(Response.ERROR)
             # terminate with error
-            return Response.ERROR
+            return self.__terminate_with_error_loudly('Launching is failed. Quitting!')
 
         # Case b, application is launched successfully
         self.__logger.debug('application is launched.')
 
-        # 2. Get minimum local step size from application and send to
-        # Application Companion
-
+        # 3. Get response from application and send to Application Companion
         if self.__read_popen_pipes(self.__application) == Response.ERROR:
             # Case a, could not read the outputs
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception('error reading output')
             # send error as response to Application Companion
             self.__send_response_to_application_companion(Response.ERROR)
             # terminate with error
-            return Response.ERROR
+            return self.__terminate_with_error_loudly('error reading output')
 
-            # Case b, outputs are read successfully
+        # Case b, outputs are read successfully
         self.__logger.debug('outputs are read.')
-
-        # 3. start resource usage monitoring, if enabled
-        if self.__is_monitoring_enabled:
-            self.__logger.info(f"starting monitoring for PIDs: {self.__action_pids}")
-            for action_pid in self.__action_pids:
-                if self.__start_resource_usage_monitoring(action_pid) == Response.ERROR:
-                    # monitoring could not be started, a relevant exception is
-                    # already logged with traceback
-                    return Response.ERROR
 
         # 4. send local minimum step size as a response to Application
         # Companion
@@ -651,44 +680,49 @@ class ApplicationManager(multiprocessing.Process):
             self.__response_from_action)
         return Response.OK
 
-    def __execute_start_command(self):
+    def __execute_start_command(self, global_minimum_step_size):
         """
         1. Executes START steering command by sending it to applications.
         2. Receives output from the application.
         3. Does post-processing after the execution of applications.
         """
-        # 1. send command to application
+        # 1. update local state
+        self.__am_registered_component_service =\
+            self.__update_local_state(SteeringCommands.START)
+        if self.__am_registered_component_service == Response.ERROR:
+            # terminate loudly as state could not be updated
+            # exception is already logged with traceback
+            return self.__respond_with_state_update_error()
+        
+        # 2. start resource usage monitoring, if enabled
+        if self.__is_monitoring_enabled:
+            self.__logger.info(f"starting monitoring for PIDs: {self.__action_pids}")
+            for action_pid in self.__action_pids:
+                if self.__start_resource_usage_monitoring(action_pid) == Response.ERROR:
+                    # monitoring could not be started, a relevant exception is
+                    # already logged with traceback
+                    return Response.ERROR
+
+        # 3. send command to application
         self.__send_command_to_application(SteeringCommands.START.name)
 
-        # 2. Read outputs from the application
+        # 4. Read outputs from the application
         if self.__read_popen_pipes(self.__application) == Response.ERROR:
             # Case a, could not read the outputs
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception('error reading output')
-            # send error as response to Application Companion
+             # send error as response to Application Companion
             self.__send_response_to_application_companion(Response.ERROR)
             # terminate with error
-            return Response.ERROR
+            return self.__terminate_with_error_loudly('error reading output')
 
         # Case b, outputs are read successfully
         self.__logger.debug('outputs are read.')
 
-        # 3. process is finished, do post-processing (e.g. stop monitoring etc)
+        # 5. process is finished, do post-processing (e.g. stop monitoring etc)
         if self.__post_processing() == Response.ERROR:
-            # Case a, Post processing fails
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception('post processing fails.')
             # send error as response to Application Companion
             self.__send_response_to_application_companion(Response.ERROR)
-            # terminate with error
+            # an exception is already logged with trace back in callee
+            # function, now terminate with error
             return Response.ERROR
 
         # Case b, post-processing is done
@@ -698,35 +732,95 @@ class ApplicationManager(multiprocessing.Process):
         self.__send_response_to_application_companion(Response.OK)
         return Response.OK
 
-    def __execute_end_command(self):
+    def __execute_end_command(self, parameters):
         """
         Checks the exit status of the application.
 
         NOTE later add other functionality here such as post data analysis etc.
         """
-        # Check whether the application executed successfully
+        # 1. update local state
+        self.__am_registered_component_service =\
+            self.__update_local_state(SteeringCommands.END)
+        if self.__am_registered_component_service == Response.ERROR:
+            # terminate loudly as state could not be updated
+            # exception is already logged with traceback
+            return self.__respond_with_state_update_error()
+        
+        # 2. Check whether the application executed successfully
         self.__exit_status = self.__popen_process.poll()
         #  Case a, something went wrong during application execution
         if not self.__exit_status == 0:
-            try:
-                # raise runtime exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback details
-                self.__logger.exception(
-                    f"application <{self.__application}> "
-                    f" action: <{self.__actions_id}> execution "
-                    f"went wrong, finished with rc = {self.__exit_status}")
-            # send error as a response to Application Companion
+            # send error as response to Application Companion
             self.__send_response_to_application_companion(Response.ERROR)
             # terminate with error
-            return Response.ERROR
+            return self.__terminate_with_error_loudly(
+                f"application <{self.__application}> "
+                f" action: <{self.__actions_id}> execution "
+                f"went wrong, finished with rc = {self.__exit_status}"
+            )
 
         # Case b, application executed successfully
         self.__logger.info(f'Action <{self.__actions_id}> finished properly.')
         self.__send_response_to_application_companion(Response.OK)
         return Response.OK
 
+    def __respond_with_state_update_error(self):
+        """
+        i)  informs Applicaiton Compnaion about local state update failure.
+        ii) logs the exception with traceback and terminates loudly with error.
+        """
+        # inform Applocation Companion about state update failure
+        self.__send_response_to_application_companion(EVENT.STATE_UPDATE_FATAL)
+        # log the exception with traceback details
+        return self.__terminate_with_error_loudly("Could not update state. Quitting!")
+    
+    def __setup_communicators(self):
+        """helper function to set up communicators"""
+        # initialize the Communicator object for communication via Queues with
+        # Application Manager
+        if self.__port_range_for_application_manager:
+            # initialize the Communicator object for communication via ZMQ with
+            # Command&Control service
+            self.__communicator = CommunicatorZMQ(
+                self._log_settings,
+                self._configurations_manager)
+            self.__logger.debug(f"communicator is set: {self.__communicator}")
+
+        else:
+            self.__communicator = CommunicatorQueue(
+            self._log_settings,
+            self._configurations_manager)
+            self.__logger.debug(f"communicator is set: {self.__communicator}")
+    
+    def __terminate_with_error_loudly(self, custom_message):
+        """        
+        raises RuntimeException with custom message and return Error as a
+        response to terminate with Error.
+        """
+        try:
+            # raise runtime exception
+            raise RuntimeError
+        except RuntimeError:
+            # log the exception with traceback details
+            self.__logger.exception(custom_message)
+            # terminate with ERROR
+            return Response.ERROR
+    
+    def __parse_command(self):
+        """
+        helper function to parse commands received from Applicaiton Companion
+        """
+        command = self.__communicator.receive(
+                self.__rep_endpoint_with_application_companion)
+        self.__logger.debug(f"command received: {command}")
+        try:
+            current_steering_command = command.get(COMMANDS.STEERING_COMMAND.name)
+            parameters = command.get(COMMANDS.PARAMETERS.name)
+        except ValueError:
+            self.__terminate_with_error_loudly("error in parsing command")
+        
+        return current_steering_command, parameters
+    
     def __fetch_and_execute_steering_commands(self):
         """
         Main loop to fetch and execute the steering commands.
@@ -745,12 +839,11 @@ class ApplicationManager(multiprocessing.Process):
         # loop for executing and fetching the steering commands
         while True:
             # 1. fetch the Steering Command
-            current_steering_command = self.__communicator.receive(
-                self.__application_manager_in_queue
-            )
-            self.__logger.debug(f"got the command {current_steering_command}")
+            current_steering_command, parameters = self.__parse_command()
+            self.__logger.debug(f"got the command: {current_steering_command}")
+            self.__logger.debug(f"got the parameters: {parameters}")
             # 2. execute the current steering command
-            if command_execution_choices[current_steering_command]() ==\
+            if command_execution_choices[current_steering_command](parameters) ==\
                     Response.ERROR:
                 # something went wrong, terminate with error
                 # NOTE a relevant exception is already logged with traceback
@@ -765,13 +858,79 @@ class ApplicationManager(multiprocessing.Process):
 
             # 3 (b). Otherwise, keep fetching/executing the steering commands
             continue
+    
+    def __setup_endpoints(self):
+        # if the range of ports are not provided then use the shared queues
+        # assuming that it is to be deployed on laptop/single node
+        if self.__port_range_for_application_manager is None:
+            # proxies to the shared queues
+            # for in-coming messages
+            self.__application_manager_in_queue = multiprocessing.Manager().Queue()
+            # for out-going messages
+            self.__application_manager_out_queue = multiprocessing.Manager().Queue()
+            self.__endpoints_address = (self.__application_manager_in_queue,
+                                        self.__application_manager_out_queue)
+            return Response.OK
 
+        else:   # create ZMQ endpoints
+            self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+            # Endpoint with Application Companion via a REP socket
+            self.__rep_endpoint_with_application_companion =\
+                self.__zmq_sockets.create_socket(zmq.REP)
+            self.__my_ip = networking_utils.my_ip()  # get IP address
+            # get the port bound to REP socket to communicate with Application
+            # Companion
+            port_with_application_companion =\
+                self.__zmq_sockets.bind_to_first_available_port(
+                    zmq_socket=self.__rep_endpoint_with_application_companion,
+                    ip=self.__my_ip,
+                    min_port=self.__port_range_for_application_manager['MIN'],
+                    max_port=self.__port_range_for_application_manager['MAX'],
+                    max_tries=self.__port_range_for_application_manager['MAX_TRIES']
+                )
+            
+            # check if port could not be bound
+            if port_with_application_companion is Response.ERROR:
+                # NOTE the relevant exception with traceback is already logged
+                # by callee function
+                self.__logger.error("port with Application Companion could not"
+                                    " be bound")
+                # return with error to terminate
+                return Response.ERROR
+
+            # everything went well, now create endpoints address
+            endpoint_address_with_application_companion =\
+                Endpoint(self.__my_ip, port_with_application_companion)
+            
+            self.__endpoints_address = {
+                SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION: endpoint_address_with_application_companion}
+
+            return Response.OK
+
+    def __update_local_state(self, input_command):
+        """
+        updates the local state.
+
+        Parameters
+        ----------
+
+        input_command: SteeringCommands.Enum
+            the command to transit from the current state to next legal state
+
+        Returns
+        ------
+            return code as int
+        """
+        return self.__health_registry_manager_proxy.update_local_state(
+            self.__am_registered_component_service, input_command
+        )
+    
     def __pre_processing(self):
         """
         Does pre-processing such as set affinity for its won self, set up
         Communicator, get application to be executed, etc.
         """
-        self.__logger.debug('pre-processing starts...')
+        self.__logger.info('setting up Application Manager')
         pid = os.getpid()  # get its own PID
 
         # 1. bind itself with a user defined single CPU core e.g. CPU core 1
@@ -780,25 +939,10 @@ class ApplicationManager(multiprocessing.Process):
             # Case a, affinity is not set
             # NOTE Application Manager is executing, however its affinity is
             # not set to a particular CPU core
-            try:
-                # raise run time error exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('Affinity could not be set.')
-
-        # 2. fetch the application to be executed
-        try:
-            self.__application = self.__actions.get('action')
-        except KeyError:
-            # 'action' could not be found in 'actions' dictionary
-            # log the exception with traceback
-            self.__logger.exception("'action is not a valid key.")
-            return Response.ERROR
-
-        # 3. fetch the application parameters
-        # application_args = self.__actions.get('args')
-        # 4. fetch the action id
+            self.__terminate_with_error_loudly('Affinity could not be set.')
+        
+        # 2. fetch the application parameters
+        # fetch the action id
         try:
             self.__actions_id = self.__actions.get('action-id')
         except KeyError:
@@ -807,14 +951,40 @@ class ApplicationManager(multiprocessing.Process):
             self.__logger.exception("'action-id' is not a valid key.")
             return Response.ERROR
 
-        # otherwise, action and action-id are found
-        self.__logger.debug(
-            f'application:{self.__application}, action_id:{self.__actions_id}')
+        # otherwise, action-id is found
+        self.__logger.debug(f'action_id:{self.__actions_id}')
 
-        # 5. initialize the Communicator object for communication via Queues
-        self.__communicator = CommunicatorQueue(
-            self._log_settings, self._configurations_manager
-        )
+        # 3. setup endpoints for communication
+        self.__setup_endpoints()
+        
+        # 4. register with Registry
+        # prepare name for proxy
+        # TODO set proxy_name to action_type
+        proxy_name = self.__actions_id+"_"+"Application_Manager"
+        self.__logger.debug(f"proxy_name: {proxy_name}")
+        # register the proxy
+        if (
+            self.__health_registry_manager_proxy.register(
+                os.getpid(),  # id
+                proxy_name,  # name
+                SERVICE_COMPONENT_CATEGORY.APPLICATION_MANAGER,  # category
+                self.__endpoints_address,  # endpoint
+                SERVICE_COMPONENT_STATUS.UP,  # current status
+                # current state
+                STATES.READY
+            ) == Response.ERROR
+        ):
+            # Case, registration fails
+            self.__terminate_with_error_loudly("Could not be registered. Quitting!")
+
+        # Otherwise, indicate a successful registration
+        self.__logger.info("registered with registry.")
+
+        # 5. initialize the Communicator object for communication
+        # self.__communicator = CommunicatorQueue(
+        #     self._log_settings, self._configurations_manager
+        # )
+        self.__setup_communicators()
         # pre-processing is complete
         self.__logger.debug('pre-processing is done.')
         return Response.OK

@@ -17,14 +17,15 @@ import signal
 import pickle
 import time
 import base64
-from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
+import zmq
 
 from common.utils import networking_utils
+
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import INTEGRATED_INTERSCALEHUB_APPLICATION as INTERSCALE_HUB
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands, COMMANDS
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
@@ -36,6 +37,7 @@ from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
+from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
 
 class ApplicationCompanion(multiprocessing.Process):
     """
@@ -45,24 +47,14 @@ class ApplicationCompanion(multiprocessing.Process):
 
     def __init__(self, log_settings, configurations_manager, actions,
                  proxy_manager_connection_details,
-                 port_range=None):
+                 port_range=None,
+                 port_range_for_application_manager=None):
         multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
             name=__name__, log_configurations=self._log_settings
         )
-        # # proxies to the shared queues
-        # self.__application_companion_in_queue = (
-        #     multiprocessing.Manager().Queue()
-        # )  # for in-comming messages
-        # self.__application_companion_out_queue = (
-        #     multiprocessing.Manager().Queue()
-        # )  # for out-going messages
-        # for sending the commands to Application Manager
-        self.__application_manager_in_queue = multiprocessing.Manager().Queue()
-        # for receiving the responses from Application Manager
-        self.__application_manager_out_queue = multiprocessing.Manager().Queue()
         # actions (applications) to be launched
         self.__actions = actions
 
@@ -74,35 +66,35 @@ class ApplicationCompanion(multiprocessing.Process):
         # Connect with Proxy Manager Server
         # NOTE: it terminates with RuntimeError if connection could ne be made
         # for whatever reasons
+        self.__proxy_manager_connection_details = proxy_manager_connection_details
         self._proxy_manager_client.connect(
-            proxy_manager_connection_details["IP"],
-            proxy_manager_connection_details["PORT"],
-            proxy_manager_connection_details["KEY"],
+            self.__proxy_manager_connection_details["IP"],
+            self.__proxy_manager_connection_details["PORT"],
+            self.__proxy_manager_connection_details["KEY"],
         )
 
         # Now, get the proxy to registry manager
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
             
-        self.__is_registered = multiprocessing.Event()
         # initialize AffinityManager for handling affinity settings
         self.__affinity_manager = AffinityManager(
             self._log_settings, self._configurations_manager
         )
         self.__port_range = port_range
+        self.__port_range_for_application_manager = port_range_for_application_manager
         # restrict Application Companion to a single core (i.e core 1) only
         # so not to interrupt the execution of the main application
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
+        self.__req_endpoint_with_application_manager = None
+        self.__application_manager_proxy_list = []
         self.__communicator = None
         self.__endpoints_address = None
         self.__ac_registered_component_service = None
         self.__application_manager = None
+        self.__action_id = None
         self.__action_pids = []
         self.__logger.debug("Application Companion is initialized")
-
-    @property
-    def is_registered_in_registry(self):
-        return self.__is_registered
 
     def __get_component_from_registry(self, target_components_category) -> list:
         """
@@ -137,6 +129,76 @@ class ApplicationCompanion(multiprocessing.Process):
         return self.__command_and_control_service[0].endpoint[
             SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION]
 
+    def __set_up_channel_with_app_manager(self):
+        """creates communication endpoints"""
+        # 1. fetch proxy to Application Manager from registry
+        # TODO set as per number of Application Manager defined in XML settings
+        total_application_managers = 1
+        application_manager_proxy_list = []
+        while len(application_manager_proxy_list) < total_application_managers:
+             # wait until it gets Application Manager proxy from Registry
+             # TODO handle deadlock here
+            self.__logger.debug("looking for Application Manager Proxy in Registry. "
+                                "retry in 1 sec!")
+            time.sleep(1)
+            application_manager_proxy_list.append(
+                self.__get_component_from_registry(
+                            SERVICE_COMPONENT_CATEGORY.APPLICATION_MANAGER
+                            ))
+        # found all proxies related to SERVICE_COMPONENT_CATEGORY.APPLICATION_MANAGER
+        self.__logger.debug('found all Application Manager Proxies: '
+                            f'{application_manager_proxy_list}')
+        # get proxy to Application Manager belong to current action
+        for proxy in application_manager_proxy_list[0]:
+            if self.__action_id in proxy.name:
+                self.__application_manager_proxy_list.append(proxy)
+                self.__logger.debug(
+                    'found Application Manager Proxy: '
+                    f'{self.__application_manager_proxy_list}')
+
+        # 2. fetch Application Manager endpoint set to communicate with
+        # Applicaiton Companion
+        # NOTE fetching endpoint details for 'one' Application Manager
+        # TODO change it later to create a list when more Application Managers
+        # are launched
+
+        # Case: communicate using Shared Queues
+        # TODO handle the case of shared queues
+        # NOTE the functionality using queues is not tested yet and may be broken
+        # if the range of ports are not provided then use the shared queues
+        # assuming that it is to be deployed on laptop/single node
+        if self.__port_range_for_application_manager is None:
+            # get proxies to the shared queues for comunicating the commands to
+            # Application Manager
+            self.__application_manager_in_queue, 
+            self.__application_manager_out_queue =\
+            self.__application_manager_proxy_list[0].endpoint[
+                SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION]
+            return Response.OK
+       
+       # Case: communicate using 0MQs
+        else:
+            self.__logger.debug("creating 0MQ endpoint")
+            # Endpoint with Application Manager for communicating via a REQ socket
+            self.__req_endpoint_with_application_manager =\
+                self.__zmq_sockets.create_socket(zmq.REQ)
+
+            application_manager_endpoint =\
+                self.__application_manager_proxy_list[0].endpoint[
+                    SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION]
+            # 3. connect with endpoint (REP socket) of Application Manager
+            self.__req_endpoint_with_application_manager.connect(
+                f"tcp://"  # protocol
+                f"{application_manager_endpoint.IP}:"  # ip
+                f"{application_manager_endpoint.port}"  # port
+                )
+            self.__logger.info(
+                "C&C channel - connected with Application Manager at "
+                f"{application_manager_endpoint.IP}"
+                f":{application_manager_endpoint.port}")
+
+            return Response.OK
+    
     def __setup_command_control_channel(self):
         """creates communication endpoints"""
         # if the range of ports are not provided then use the shared queues
@@ -154,15 +216,17 @@ class ApplicationCompanion(multiprocessing.Process):
             self.__endpoints_address = (self.__queue_in, self.__queue_out)
             return Response.OK
         else:
-            # create ZMQ endpoints
-            zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+            # # create ZMQ endpoints
+            # zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
             # Endpoint with C&C service for receiving commands via a SUB socket
-            self.__subscription_endpoint_with_command_control = zmq_sockets.sub_socket()
+            self.__subscription_endpoint_with_command_control =\
+                self.__zmq_sockets.create_socket(zmq.SUB)
             # connect with endpoint (PUB socket) of C&C service
             # fetch C&C endpoint <ip:port>
-            command_and_steering_service_endpoint = self.__get_command_control_endpoint()
+            command_and_steering_service_endpoint =\
+                self.__get_command_control_endpoint()
             # subscribe to topic
-            zmq_sockets.subscribe_to_topic(
+            self.__zmq_sockets.subscribe_to_topic(
                 self.__subscription_endpoint_with_command_control,
                 PUBLISHING_TOPIC.STEERING.value)
             # connect to receive broadcast
@@ -177,13 +241,14 @@ class ApplicationCompanion(multiprocessing.Process):
                                "to receive (broadcast) commands")
 
             # Endpoint with C&C for sending responses via a PUSH socket
-            self.__push_endpoint_with_command_control = zmq_sockets.push_socket()
+            self.__push_endpoint_with_command_control =\
+                self.__zmq_sockets.create_socket(zmq.PUSH)
             self.__my_ip = networking_utils.my_ip()  # get IP address
             # bind PUSH socket to first available port in range for sending the
             # response, and get port bound to PUSH socket to communicate with
             # C&C service
             port_to_push_to_command_control =\
-                zmq_sockets.bind_to_first_available_port(
+                self.__zmq_sockets.bind_to_first_available_port(
                     zmq_socket=self.__push_endpoint_with_command_control,
                     ip=self.__my_ip,
                     min_port=self.__port_range['MIN'],
@@ -226,8 +291,39 @@ class ApplicationCompanion(multiprocessing.Process):
                 # log the exception with traceback
                 self.__logger.exception("Affinity could not be set.")
         
-        # 1. setup communication endpoints with Orchestrator and Application
-        # Companions
+        # 2. fetch the action id
+        if self.__get_action_id() == Response.ERROR:
+            # NOTE a relevant exception is already logged with traceback
+            # return with error to terminate loudly
+            return Response.ERROR
+        
+        # create ZMQ endpoints
+        self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+        # 3. initialize Application Manager
+        self.__application_manager = ApplicationManager(
+            # parameters for setting up the uniform log settings
+            self._log_settings,  # log settings
+            self._configurations_manager,  # Configurations Manager
+            # actions (applications) to be launched
+            self.__actions,
+            # connection detials of Registry Proxy Manager
+            self.__proxy_manager_connection_details,
+            # range of ports for Application Manager
+            self.__port_range_for_application_manager,
+            # flag to enable/disable resource usage monitoring
+            # TODO set monitoring enable/disable settings from XML
+            enable_resource_usage_monitoring=True
+        )
+
+        # 4. start the application Manager
+        self.__logger.debug("starting application Manager.")
+        self.__application_manager.start()
+        # wait a bit to let the Application Manager setup and register with registry
+        time.sleep(0.5)
+        # setup channel with Application Manager
+        self.__set_up_channel_with_app_manager()
+        
+        # 1. setup communication endpoints with C&C Service
         if self.__setup_command_control_channel() == Response.ERROR:
             try:
                 # raise an exception
@@ -261,8 +357,6 @@ class ApplicationCompanion(multiprocessing.Process):
                 # terminate with error
             return Response.ERROR
 
-        # 3. indicate a successful registration
-        self.__is_registered.set()
         self.__logger.info("registered with registry.")
 
         # 4. get proxy to update the states later in registry
@@ -278,20 +372,23 @@ class ApplicationCompanion(multiprocessing.Process):
         # 5. setup communicators for Command&Control and Application Manager
         self.__setup_communicators()
         return Response.OK
-
+    
     def __setup_communicators(self):
         """helper function to set up communicators"""
         # initialize the Communicator object for communication via Queues with
         # Application Manager
-        self.__communicator = CommunicatorQueue(
+        if self.__port_range_for_application_manager:
+            # initialize the Communicator object for communication via ZMQ with
+            # Command&Control service
+            self.__communicator = CommunicatorZMQ(
+                self._log_settings,
+                self._configurations_manager)
+
+        else:
+            self.__communicator = CommunicatorQueue(
             self._log_settings,
             self._configurations_manager)
     
-        # initialize the Communicator object for communication via ZMQ with
-        # Command&Control service
-        self.__communicator_zmq = CommunicatorZMQ(
-            self._log_settings,
-            self._configurations_manager)
 
     def __respond_with_state_update_error(self):
         """
@@ -350,12 +447,14 @@ class ApplicationCompanion(multiprocessing.Process):
         # return self.__communicator.send(
         #     response, self.__application_companion_out_queue
         # )
-        return self.__communicator_zmq.send(response, self.__push_endpoint_with_command_control)
+        return self.__communicator.send(response, self.__push_endpoint_with_command_control)
 
     def __receive_response_from_application_manager(self):
         '''helper function to receive responses from Application Manager'''
+        # response = self.__communicator.receive(
+        #                 self.__application_manager_out_queue)
         response = self.__communicator.receive(
-                        self.__application_manager_out_queue)
+            self.__req_endpoint_with_application_manager)
         self.__logger.debug(f"response from Application Manager {response}")
         return response
 
@@ -393,8 +492,10 @@ class ApplicationCompanion(multiprocessing.Process):
     def __send_command_to_application_manager(self, command):
         '''helper function to send command to Application Manager'''
         self.__logger.debug(f'sending {command} to Application Manager.')
+        # self.__communicator.send(command,
+        #                          self.__application_manager_in_queue)
         self.__communicator.send(command,
-                                 self.__application_manager_in_queue)
+                                 self.__req_endpoint_with_application_manager)
 
     def __get_interscalehub_proxy_list(self):
         """
@@ -407,6 +508,7 @@ class ApplicationCompanion(multiprocessing.Process):
         total_interscaleHubs = 4
         while len(interscalehub_proxy_list) < total_interscaleHubs:
             # wait until it gets InterscaleHub proxy from Registry
+            # TODO handle deadlock here
             self.__logger.info("waiting for InterscaleHub connection details. "
                                "retry in 1 sec!")
             time.sleep(1)
@@ -502,7 +604,7 @@ class ApplicationCompanion(multiprocessing.Process):
     def __get_action_id(self):
         '''helper function to retrieve action id from actions'''
         try:
-            action_id = self.__actions['action-id']
+            self.__action_id = self.__actions['action-id']
         except KeyError:
             # 'action-id' could not be found in 'actions' dictionary
             # log the exception with traceback
@@ -510,7 +612,7 @@ class ApplicationCompanion(multiprocessing.Process):
             return Response.ERROR
 
         # action id is retrieved
-        return action_id
+        return Response.OK
     
     def __execute_init_command(self):
         """helper function to execute INIT steering command"""
@@ -518,28 +620,37 @@ class ApplicationCompanion(multiprocessing.Process):
         # 1. update local state
         self.__ac_registered_component_service =\
             self.__update_local_state(SteeringCommands.INIT)
+
         if self.__ac_registered_component_service == Response.ERROR:
             # terminate loudly as state could not be updated
             # exception is already logged with traceback
             return self.__respond_with_state_update_error()
 
-        # fetch the action id
-        action_id = self.__get_action_id()
-        if action_id == Response.ERROR:
-            # NOTE a relevant exception is already logged with traceback
-            # return with error to terminate loudly
-            return Response.ERROR
+        # 2. update local state of Application Manager
+        # NOTE Application Compnion updates the local states of Application  
+        # Manager for transiting from STATES.READY to STATES.SYNCHRONIZATION
+        # while they are waiting to receive the connection details of
+        # InterscaleHubs
 
-        # 2. proceed only if the action is InterscaleHub, otherwise wait until
+        # TODO handle case where there are more than one Application Managers
+        self.__application_manager_proxy_list[0] =\
+            self.__health_registry_manager_proxy.update_local_state(
+                self.__application_manager_proxy_list[0], SteeringCommands.INIT)
+
+        if self.__application_manager_proxy_list[0] == Response.ERROR:
+            # terminate loudly as state could not be updated
+            # exception is already logged with traceback
+            return self.__respond_with_state_update_error()
+
+        # 3. proceed only if the action is InterscaleHub, otherwise wait until
         # the InterscaleHub registers its connections details
-
         # Case a: action type is SIMULATOR
         # fetch and append InterscaleHub MPI endpoint connection details
-        if action_id == 'action_004' or action_id == 'action_010':  # TODO will be updated with the actions_type from XML
+        if self.__action_id == 'action_004' or self.__action_id == 'action_010':  # TODO will be updated with the actions_type from XML
             action_simulators_names = {'action_004': "NEST", 'action_010':"TVB"}
             # get mpi endpoint connection details
             interscalehub_mpi_endpoints =\
-                self.__get_endpoints(action_simulators_names.get(action_id))
+                self.__get_endpoints(action_simulators_names.get(self.__action_id))
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
             action_with_parameters = self.__actions['action']
@@ -547,42 +658,22 @@ class ApplicationCompanion(multiprocessing.Process):
                         pickle.dumps(interscalehub_mpi_endpoints)))
             self.__actions['action'] = action_with_parameters
 
-        # 3. initialize Application Manager
-        self.__application_manager = ApplicationManager(
-            # parameters for setting up the uniform log settings
-            self._log_settings,  # log settings
-            self._configurations_manager,  # Configurations Manager
-            # actions (applications) to be launched
-            self.__actions,
-            # proxy to shared queue to send the commands to
-            # Application Manager
-            self.__application_manager_in_queue,
-            # proxy to shared queue to receive responses from
-            # Application Manager
-            self.__application_manager_out_queue,
-            # flag to enable/disable resource usage monitoring
-            # TODO set monitoring enable/disable settings from XML
-            enable_resource_usage_monitoring=True,
-        )
-
-        # 4. start the application Manager
-        self.__logger.debug("starting application Manager.")
-        self.__application_manager.start()
-        # send INIT command to Application Manager
+        # 4. send INIT command to Application Manager
         steering_command = SteeringCommands.INIT
-        self.__send_command_to_application_manager(steering_command)
+        command = self.__prepare_command(steering_command, self.__actions)
+        self.__send_command_to_application_manager(command)
 
         # 5. wait until a response is received from Application Manager after
         # command execution
 
         # NOTE if action type is SIMULATOR then response is PID and the local
         # minimum step-size, Otherwise the response is PID and connection
-        # endpoint details if it is INTERSCALE_HUB
+        # endpoint details if it is a INTERSCALE_HUB
         response = self.__receive_response_from_application_manager()
 
         # 6. if action type is INTERSCALEHUB then register the connection
         # details with registry
-        if action_id == 'action_006' or action_id == 'action_008':  # TODO will be updated with the actions_type from XML
+        if self.__action_id == 'action_006' or self.__action_id == 'action_008':  # TODO will be updated with the actions_type from XML
             # register endpoints with registry service
             if self.__register_interscalehubs_endpoints(response) == Response.ERROR:
                 # Case a: InterscaleHubs endpoints could not be registered
@@ -598,6 +689,12 @@ class ApplicationCompanion(multiprocessing.Process):
         # 6. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
         return self.__command_execution_response(response, steering_command)
+    
+    def __prepare_command(self, steering_command, parameters):
+        command = {COMMANDS.STEERING_COMMAND.name: steering_command,
+                   COMMANDS.PARAMETERS.name: parameters}
+        self.__logger.debug(f"prepared the command: {command}")
+        return command
 
     def __execute_start_command(self):
         """helper function to execute START steering command"""
@@ -613,7 +710,9 @@ class ApplicationCompanion(multiprocessing.Process):
         # 2. start the application execution
         # send START command to Application Manager
         steering_command = SteeringCommands.START
-        self.__send_command_to_application_manager(steering_command)
+        # TODO send minimum step size as parameters with steering command
+        command = self.__prepare_command(steering_command, None)
+        self.__send_command_to_application_manager(command)
 
         # 3. wait until a response is received from Application Manager after
         # command execution
@@ -635,12 +734,16 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # 2. send END command to Application Manager
         steering_command = SteeringCommands.END
-        self.__send_command_to_application_manager(steering_command)
+        command = self.__prepare_command(steering_command, None)
+        self.__send_command_to_application_manager(command)
+        # self.__send_command_to_application_manager(steering_command)
 
         # 3. wait until a response is received from Application Manager after
         # command execution
+        # response = self.__communicator.receive(
+        #                 self.__application_manager_out_queue)
         response = self.__communicator.receive(
-                        self.__application_manager_out_queue)
+            self.__req_endpoint_with_application_manager)
         self.__logger.debug(f"response from Application Manager {response}")
         # TODO check for response and act accordingly
 

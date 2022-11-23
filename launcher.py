@@ -22,7 +22,7 @@ from EBRAINS_RichEndpoint.orchestrator.command_control_service import CommandCon
 from EBRAINS_RichEndpoint.orchestrator.orchestrator import Orchestrator
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from EBRAINS_RichEndpoint.steering.poc_steering_menu import POCSteeringMenu
+from EBRAINS_RichEndpoint.steering.steering_service import SteeringService
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
 
@@ -89,8 +89,6 @@ class Launcher:
         else:
             # NOTE initializing with hardcoded range from utils
             self.__ports_for_command_control_channel = networking_utils.default_range_of_ports
-        # print(f'__debug__,networking_utils.default_range_of_ports={networking_utils.default_range_of_ports}')
-        # print(f'__debug__,__ports_for_command_control_channel={self.__ports_for_command_control_channel}')
 
         # if Command&Control channel is going to be established between multiple nodes
         if self.__ports_for_command_control_channel is not None:
@@ -98,6 +96,8 @@ class Launcher:
             self.__port_range_for_command_control = self.__ports_for_command_control_channel["COMMAND_CONTROL"]
             self.__port_range_for_application_companions = self.__ports_for_command_control_channel[
                 "APPLICATION_COMPANION"]
+            self.__port_range_for_application_manager = self.__ports_for_command_control_channel[
+                "APPLICATION_MANAGER"]
 
         self.__logger.debug("initialized.")
 
@@ -114,30 +114,29 @@ class Launcher:
         else:
             self.__proxy_manager_connection_details = proxy_manager_server_address
 
-    def __get_proxy_to_registered_component(self, component_service,
-                                            component_service_name):
+    def __get_proxy_to_registered_component(self, component_service_name):
         '''
         It checks whether the component is registered with registry.
         If registered, it returns the proxy to component.
         Otherwise, it returns None.
         '''
-        # timeout to rule out the network delay
-        timeout = time.time() + self.__latency
-        component = None
-        while time.time() <= timeout:
-            if component_service.is_registered_in_registry.is_set():
-                component = self.__component_service_registry_manager. \
+        proxy = None
+        while not proxy:
+            # fetch proxy if component is already registered    
+            proxy = self.__component_service_registry_manager.\
                     find_all_by_category(component_service_name)
-                self.__logger.debug(f'{component} is found.')
+            if proxy:  # Case, proxy is found
+                self.__logger.debug(f'{component_service_name.name} is found '
+                                    f'proxy: {proxy}.')
                 break
-            else:
-                time.sleep(0.001)  # do not hog CPU
-                continue
-        # if component could not be found in registry after the timeout
-        if component is None:
-            self.__logger.critical(f'TIMEOUT! {component_service} '
-                                   f'is not registered yet.')
-        return component
+            else:  # Case: proxy is not found yet
+                self.__logger.debug(f"{component_service_name.name} is not yet "
+                                   "registered, retry in 0.5 second.")
+                time.sleep(0.5)  # do not hog CPU
+                continue 
+
+        # Case, proxy is found
+        return proxy
 
     def __terminate_application_companions(self, application_companions):
         # terminate the application companions
@@ -145,9 +144,9 @@ class Launcher:
             application_companion.terminate()
             application_companion.join()
 
-    def __terminate_command_and_control_service(self, steering_service):
-        steering_service.terminate()
-        steering_service.join()
+    def __terminate_launched_component(self, component):
+        component.terminate()
+        component.join()
 
     def __log_exception_and_terminate_with_error(self, error_summary):
         """
@@ -164,7 +163,7 @@ class Launcher:
 
     def __compute_latency(self):
         """returns the latency of the network"""
-        latency = 2  # TODO determine the latency to registry service
+        latency = 10  # TODO determine the latency to registry service
         return latency
 
     def launch(self, actions):
@@ -174,19 +173,21 @@ class Launcher:
         '''
         # determine network delay
         self.__latency = self.__compute_latency()
+        
+        #TODO remove checks if components are registered -> done by steering_service now
+        # new reponsibility for termination of applications? 
 
         # 1. launch Command&Control service
         self.__logger.info('setting up Command and Control service.')
-        steering_service = CommandControlService(
+        cc_service = CommandControlService(
             self._log_settings,
             self._configurations_manager,
             self.__proxy_manager_connection_details,
             self.__port_range_for_command_control)
-        steering_service.start()
+        cc_service.start()
 
         # check if Command&Control is already registered with registry
         if self.__get_proxy_to_registered_component(
-                steering_service,
                 SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) is None:
             # log exception with traceback and terminate with error
             self.__log_exception_and_terminate_with_error(
@@ -200,7 +201,8 @@ class Launcher:
                 self._configurations_manager,
                 action,
                 self.__proxy_manager_connection_details,
-                self.__port_range_for_application_companions))
+                self.__port_range_for_application_companions,
+                self.__port_range_for_application_manager))
 
         for application_companion in application_companions:
             self.__logger.info('setting up Application Companion.')
@@ -209,10 +211,9 @@ class Launcher:
         # check if Application Companions are already registered with registry
         for application_companion in application_companions:
             if self.__get_proxy_to_registered_component(
-                    application_companion,
                     SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION) is None:
                 # terminate Command&Control service
-                self.__terminate_command_and_control_service(steering_service)
+                self.__terminate_launched_component(cc_service)
                 # log exception with traceback and terminate with error
                 self.__log_exception_and_terminate_with_error(
                     f'{application_companion} is not yet registered')
@@ -225,36 +226,36 @@ class Launcher:
                                     self.__port_range_for_orchestrator)
         orchestrator.start()
         # check if Orchestrator is already registered with registry
-        orchestrator_component = self.__get_proxy_to_registered_component(
-            orchestrator,
-            SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
-        # Case a: Orchestrator is not yet registered
-        if orchestrator_component is None:
+        if self.__get_proxy_to_registered_component(
+                SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR) is None:
             # terminate Command and Control service
-            self.__terminate_command_and_control_service(steering_service)
+            self.__terminate_launched_component(cc_service)
             # terminate Application Companions
             self.__terminate_application_companions(application_companions)
             # log exception with traceback and terminate with error
             self.__log_exception_and_terminate_with_error(
                 'Orchestrator is not yet registered')
 
-        # Case b: Orchestrator is already registered
-        # get orchestrator endpoints for communication
-        if self.__ports_for_command_control_channel is None:
-            orchestrator_in_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
-            orchestrator_out_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL]
-        else:
-            orchestrator_in_queue_proxy = orchestrator_out_queue_proxy = \
-                orchestrator_component[0].endpoint[SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE]
-
-        # 4. launch the Steering Menu Handler
-        # NOTE: this is to demonstrate the POC of steering via CLI
-        poc_steering_menu = POCSteeringMenu(self._log_settings,
+        # 4. launch the Steering Service
+        # TODO this POC handles both, interactive and non interactive steering
+        # -> refactor/rename to represent both -> generic steering
+        steering_service = SteeringService(self._log_settings,
                                             self._configurations_manager,
-                                            orchestrator_in_queue_proxy,
-                                            orchestrator_out_queue_proxy,
-                                            communicate_via_zmqs=True)
-        poc_steering_menu.start_steering()
+                                            self.__proxy_manager_connection_details,
+                                            is_communicate_via_zmqs=True,
+                                            is_interactive=False)
+        # check if steering service is already registered with registry
+        if self.__get_proxy_to_registered_component(
+                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE) is None:
+            # terminate Command and Control service
+            self.__terminate_launched_component(cc_service)
+            # terminate Application Companions
+            self.__terminate_application_companions(application_companions)
+            # terminate Orchestrator
+            self.__terminate_launched_component(orchestrator)
+            # log exception with traceback and terminate with error
+            self.__log_exception_and_terminate_with_error(
+                'Steering Service is not yet registered')
+        
+        steering_service.start_steering()
         return Response.OK
