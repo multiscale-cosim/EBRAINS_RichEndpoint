@@ -12,6 +12,7 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 import os
+from datetime import datetime
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 
 
@@ -95,7 +96,7 @@ class CPUUsage:
         process_execution_time = 0
         # wait until the process run time elapsed since process start time.
         while not process_execution_time:
-            total_time_with_children, process_start_time = self.__get_times()
+            timestamp_now, total_time_with_children, process_start_time = self.__get_times()
             
             # Case a, something went wrong while reading the file
             # NOTE more specific exception is already recirded with traceback
@@ -122,7 +123,7 @@ class CPUUsage:
             average_cpu_usage = self.__get_current_cpu_usage(
                         total_time_with_children, process_execution_time)
             self.__logger.debug(f'average cpu usage: {average_cpu_usage}')
-            return (average_cpu_usage, process_execution_time)
+            return (timestamp_now, average_cpu_usage, process_execution_time)
 
     def __get_process_running_time(self, system_uptime, process_start_time):
         # process-running-time(seconds) = system-uptime(seconds) - (starttime / USER_HZ) [1]
@@ -136,9 +137,9 @@ class CPUUsage:
         return ((total_time_with_children / self.__user_hz) / process_running_time * 100)
 
     def __get_times(self):
-        total_time_with_children, process_start_time = self.__parse(
+        timestamp_now, total_time_with_children, process_start_time = self.__parse(
             self.__read(self._path_to_read_stats))
-        return total_time_with_children, process_start_time
+        return timestamp_now, total_time_with_children, process_start_time
 
     def __read(self, _path_to_read_stats):
         try: 
@@ -152,11 +153,11 @@ class CPUUsage:
             return Response.ERROR_READING_FILE
 
     def __parse(self, stat_line):
-        
+        timestamp_now = datetime.now()
         if stat_line is Response.ERROR_READING_FILE:
             return (Response.ERROR_READING_FILE, Response.ERROR_READING_FILE)
         else:
-        
+            
             self.__logger.debug(f'stat_line: {stat_line}')
             proc_pid_stats = stat_line.split(' ')
             if self.__process_name is None:
@@ -183,4 +184,4 @@ class CPUUsage:
                                 f"cutime: {cutime}, cstime : {cstime}")
             self.__logger.debug(f'process start time: {process_start_time}')
             total_time_with_children = float(utime + stime + cutime + cstime)
-        return (total_time_with_children, process_start_time)
+        return (str(timestamp_now), total_time_with_children, process_start_time)

@@ -26,7 +26,7 @@ class Process:
     with Knowledge Graph (KG).
     '''
     def __init__(self, log_settings, configurations_manager,
-                 pid=None, path_to_read_stats=" "
+                 action_process_name, pid=None, path_to_read_stats=" "
                  ):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -40,7 +40,8 @@ class Process:
         else:
             self._path_to_read_stats = os.path.join(
                 '/proc/', str(self.__process_id), 'stat')
-        self.__process_name, self.__process_starting_time =\
+        self.__process_name = action_process_name
+        self.__process_starting_time =\
             self.__get_process_meta_information(
                 self._path_to_read_stats)
         self.__process_execution_time = 0
@@ -87,11 +88,23 @@ class Process:
     def memory_usage_stats(self, memory_usage):
         self.__resource_usage_summary.memory_usage_stats.append(memory_usage)
 
+    @property
+    def mean_cpu_usage(self): 
+        """returns the mean of total cpu usage"""
+        # comput the mean from list of tuples: [(timnestamp, cpu_usage_stats)]
+        return self.__resource_usage_summary.mean_cpu_usage
+        
+    @property
+    def mean_memory_usage(self):
+        """returns the mean of total memory usage"""
+        # compute the mean from list of tuples: [(timnestamp, memory_usage_stats)]
+        return self.__resource_usage_summary.mean_memory_usage
+
     def get_cpu_stats(self):
-        current_cpu_usage_stats, process_running_time = \
+        timestamp, current_cpu_usage_stats, process_running_time = \
             self.__cpu_usage.get_usage_stats()
         self.__process_execution_time = process_running_time
-        return current_cpu_usage_stats, process_running_time
+        return timestamp, current_cpu_usage_stats, process_running_time
 
     def get_memory_stats(self):
         return self.__memory_usage.get_usage_stats()
@@ -117,8 +130,8 @@ class Process:
         if stat_line != Response.ERROR_READING_FILE:
             self.__logger.debug(f'stat_line: {stat_line}')
             proc_pid_stats = stat_line.split(' ')
-            process_name = proc_pid_stats[1].strip('()')  # remove sorrounding parentehses
+            # process_name = proc_pid_stats[1].strip('()')  # remove sorrounding parentehses
             process_starting_time = int(proc_pid_stats[21])
             self.__logger.debug(f"process_name:{process_name}, "
                                 f"fprocess start time: {process_starting_time}")
-        return (process_name, process_starting_time)
+        return process_starting_time

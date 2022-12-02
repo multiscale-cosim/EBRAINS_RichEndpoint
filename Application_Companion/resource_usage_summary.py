@@ -11,6 +11,8 @@
 # Laboratory: Simulation Laboratory Neuroscience
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
+import collections
+
 
 class ResourceUsageSummary:
     """
@@ -24,6 +26,28 @@ class ResourceUsageSummary:
 
     @property
     def cpu_usage_stats(self): return self.__cpu_usage_stats
+
+    @property
+    def mean_cpu_usage(self): 
+        """returns the mean value of total cpu usage"""
+        # comput the mean from list of tuples: [(timnestamp, cpu_usage_stats)]
+        return [sum(sub_list) / len(sub_list)
+                for sub_list in [list(zip(*self.__cpu_usage_stats))[1]]]
+
+    @property
+    def mean_memory_usage(self):
+        """returns the mean value of total memory usage"""
+        # compute the mean from list of tuples: [(timnestamp, memory_usage_stats)]
+        memory_usage = list(map(lambda x: x[1], self.__memory_usage_stats))
+        counter = collections.Counter() 
+        frequency = 0
+        for k in memory_usage:
+            counter.update(k)
+            frequency += 1
+        result = dict (counter)
+        avg = lambda sum_value, frequency: sum_value/frequency
+        mean = [{key: avg(sum_value, frequency) for key,sum_value in result.items()}]
+        return mean
 
     @cpu_usage_stats.setter
     def cpu_usage_stats(self, cpu_usage):

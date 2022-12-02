@@ -133,6 +133,7 @@ class ApplicationManager(multiprocessing.Process):
         self.__endpoints_address = None
         self.__response_from_action = []
         self.__action_pids = []
+        self.__action_process_name = None
         self.__am_registered_component_service = None
 
         self.__logger.debug("Application Manager is initialized.")
@@ -239,7 +240,8 @@ class ApplicationManager(multiprocessing.Process):
             self._configurations_manager,
             # self.__popen_process.pid,
             pid,
-            bind_with_cores)
+            bind_with_cores,
+            self.__action_process_name)
         # start monitoring
         # Case a, monitoring could not be started
         if resource_usage_monitor.start_monitoring() == Response.ERROR:
@@ -925,6 +927,7 @@ class ApplicationManager(multiprocessing.Process):
             self.__am_registered_component_service, input_command
         )
     
+    
     def __pre_processing(self):
         """
         Does pre-processing such as set affinity for its won self, set up
@@ -953,6 +956,12 @@ class ApplicationManager(multiprocessing.Process):
 
         # otherwise, action-id is found
         self.__logger.debug(f'action_id:{self.__actions_id}')
+        # TODO isntead get the name from Launcher (XML)
+        action_simulators_names = {"action_004": "NEST_SIMULATOR",
+                                   "action_010":"TVB_SIMULATOR",
+                                   "action_006": "InterscaleHub_NEST_TO_TVB",
+                                   "action_008":"InterscaleHub_TVB_TO_NEST"}
+        self.__action_process_name = action_simulators_names[self.__actions_id]
 
         # 3. setup endpoints for communication
         self.__setup_endpoints()

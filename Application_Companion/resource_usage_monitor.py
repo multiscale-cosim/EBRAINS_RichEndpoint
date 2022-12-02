@@ -31,6 +31,7 @@ class ResourceUsageMonitor:
     def __init__(self, log_settings,
                  configurations_manager,
                  pid, bind_with_cores,
+                 action_process_name,
                  poll_interval=1.0,  # default is 1 second
                  ):
         self._log_settings = log_settings
@@ -46,6 +47,7 @@ class ResourceUsageMonitor:
         self._poll_interval = poll_interval
         self.__process = Process(self._log_settings,
                                  self._configurations_manager,
+                                 action_process_name,
                                  pid=self.process_id)
         # flag to stop monitoring
         self.keep_monitoring = True
@@ -89,8 +91,10 @@ class ResourceUsageMonitor:
             'Affinity mask': self.__bind_with_cores,
             'Execution time [seconds]': self.execution_time,
             'Process Exit status': process_exit_status,
-            'CPU usage [% average] per second': self.__process.cpu_usage_stats,
-            'Memory usage [MiB] per second': self.__process.memory_usage_stats,
+            'Mean CPU usage [%] ': self.__process.mean_cpu_usage,
+            'Mean memory usage [%] ': self.__process.mean_memory_usage,
+            'Time_stamp, CPU usage [% average] per second': self.__process.cpu_usage_stats,
+            'Time_stamp, Memory usage [MiB] per second': self.__process.memory_usage_stats,
             'Underlying Platform Basic Details': self.__platform.basic_info,
             'CPU detailed information': self.__platform.detailed_CPUs_info
             }
@@ -139,7 +143,7 @@ class ResourceUsageMonitor:
             
             # Case b, process is still running
             # get CPU stats
-            current_cpu_usage_stats, process_execution_time = \
+            timestamp_now, current_cpu_usage_stats, process_execution_time = \
                 self.__process.get_cpu_stats()                
             
             # check if something went wrong while reading the stats
@@ -153,7 +157,7 @@ class ResourceUsageMonitor:
                 break
                 
             # Case b, the stats are read successfully
-            self.__process.cpu_usage_stats.append(current_cpu_usage_stats)
+            self.__process.cpu_usage_stats.append((timestamp_now, current_cpu_usage_stats))
             time.sleep(self._poll_interval)
 
 
