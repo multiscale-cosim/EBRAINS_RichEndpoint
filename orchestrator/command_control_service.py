@@ -14,8 +14,13 @@
 import multiprocessing
 import os
 import zmq
+import sys
+import pickle
+import base64
 
 from common.utils import networking_utils
+from common.utils.security_utils import check_integrity
+
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
@@ -26,9 +31,12 @@ from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQue
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
+from EBRAINS_RichEndpoint.orchestrator import utils
+
+from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
 
 
-class CommandControlService(multiprocessing.Process):
+class CommandControlService:
     """
     It channels the command and steering between Orchestrator and
     Application Companions.
@@ -37,11 +45,10 @@ class CommandControlService(multiprocessing.Process):
                  proxy_manager_connection_details,
                  port_range=None
                  ):
-        multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
-                                        name=__name__,
+                                        name="Command_&_Control_Service",
                                         log_configurations=self._log_settings)
         
         # get client to Proxy Manager Server
@@ -293,9 +300,11 @@ class CommandControlService(multiprocessing.Process):
         # The main operational loop for channeling the command and control
         while True:
             # 1. fetch steering command
-            current_steering_command = self.__communicator.receive(
+            command = self.__communicator.receive(
                 self.__rep_endpoint_with_orchestrator)
-            self.__logger.info(f'command received: {current_steering_command.name}')
+            control_command, current_steering_command, _ = utils.parse_command(
+                self.__logger, command)
+            self.__logger.debug(f'command received: {current_steering_command.name}')
 
             # Case, STATE_UPDATE_FATAL event is received
             if current_steering_command == EVENT.STATE_UPDATE_FATAL:
@@ -315,40 +324,34 @@ class CommandControlService(multiprocessing.Process):
             # 2. broadcast the steering command
             self.__logger.info(f'Broadcasting {current_steering_command.name}')
             if self.__communicator.broadcast_all(
-                    current_steering_command,
+                    # current_steering_command,
+                    command,
                     self.__publish_endpoint_with_application_companions,
                     self.__topic_publish_steering) == Response.ERROR:
-                try:
-                    # broadcast failed, raise an exception
-                    raise RuntimeError
-                # NOTE relevant exception is already logged by Communicator
-                except Exception:
-                    # log the exception with traceback
-                    self.__logger.exception('could not broadcast.')
+                # Case a, the broadcast failed
                 # TODO: handle broadcast failure, maybe retry after a while
                 # for now, terminate with error
                 self.__logger.critical('Terminating channeling.')
-                return Response.ERROR
+                # raise and log exception with traceback and terminate with ERROR
+                # NOTE a relevant exception is already logged by Communicator
+                return self.__log_exception_and_terminate_with_error(
+                    'could not broadcast. Quitting!')
 
-            # Case, steering command is broadcasted successfully
+            # Case b, steering command is broadcasted successfully
             self.__logger.debug(f'broadcasted command: {current_steering_command.name}')
 
             # 3. collect and send responses to Orchestrator
             self.__logger.debug('collecting response.')
             # Case a, response forwarding failed
             if self.__collect_and_forward_responses() == Response.ERROR:
-                try:
-                    raise RuntimeError
-                # NOTE relevant exception is already logged by Communicator
-                except Exception:
-                    # log the exception with traceback
-                    self.__logger.exception('could not send response to '
-                                            'Orchestrator.')
                 # TODO: handle response forwarding failure, maybe retry
                 # after a while
                 # for now, terminate with error
                 self.__logger.critical('Terminating channelling.')
-                return Response.ERROR
+                # raise and log exception with traceback and terminate with ERROR
+                # NOTE a relevant exception is already logged by Communicator
+                return self.__log_exception_and_terminate_with_error(
+                    'could not send the response to Orchestrator.')
 
             # Case b, responses are forwarded successfully
             self.__logger.debug('forwarded responses to Orchestrator.')
@@ -362,35 +365,84 @@ class CommandControlService(multiprocessing.Process):
 
             # Otherwise continue channelling
             continue
-
+    
+    def __log_exception_and_terminate_with_error(self, error_summary):
+            """
+            Logs the exception with traceback and returns with Enum ERROR as a
+            response to terminate with error.
+            """
+            try:
+                # raise RuntimeError exception
+                raise RuntimeError
+            except RuntimeError:
+                # log the exception with traceback
+                self.__logger.exception(error_summary)
+            # respond with Error to terminate
+            return Response.ERROR
+    
     def run(self):
+        self.__logger.info("running at hostname: "
+                           f"{networking_utils.my_host_name()}, "
+                           f"ip: {networking_utils.my_ip()}")
         # 1. setup communication endpoints with Orchestrator and Application
         # Companions
         if self.__setup_endpoints(self.__port_range) == Response.ERROR:
-            try:
-                # raise an exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('Failed to create endpoints. '
-                                        'Quitting!')
-            # terminate with ERROR
-            return Response.ERROR
+            # endpoints could not be established
+            # raise and log exception with traceback and terminate with ERROR
+            return self.__log_exception_and_terminate_with_error(
+                'Failed to create endpoints. Quitting!')
 
         # 2. register with registry
         if self.__register_with_registry() == Response.ERROR:
-            try:
-                # raise an exception
-                raise RuntimeError
-            except RuntimeError:
-                # log the exception with traceback
-                self.__logger.exception('Command and Control service could '
-                                        'not be registered. Quitting!')
-            # terminate with ERROR
-            return Response.ERROR
+            # registration fails
+            # raise and log exception with traceback and terminate with ERROR
+            return self.__log_exception_and_terminate_with_error(
+                'Command&Control service could not be registered. Quitting!')
 
         # 3. initialize communicator
         self.__setup_communicator()
 
         # 4. start channeling command and control
         return self.__channel_command_and_control()
+
+
+if __name__ == '__main__':
+    if len(sys.argv)==5:
+        # TODO better handling of arguments parsing
+        # 1. unpickle objects
+        # unpickle log_settings
+        log_settings = pickle.loads(base64.b64decode(sys.argv[1]))
+        # unpickle configurations_manager object
+        configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
+        # unpickle connection detials of Registry Proxy Manager object
+        proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[3]))
+        # unpickle range of ports for Command & Control Service
+        port_range = pickle.loads(base64.b64decode(sys.argv[4]))
+        
+        # 2. security check of pickled objects
+        # it raises an exception, if the integrity is compromised
+        try:
+            check_integrity(configurations_manager, ConfigurationsManager)
+            check_integrity(log_settings, dict)
+            check_integrity(proxy_manager_connection_details, dict)
+            check_integrity(port_range, dict)
+        except Exception as e:
+            # NOTE an exception is already raised with context when checking the 
+            # integrity
+            print(f'pickled object is not an instance of expected type!. {e}')
+            sys.exit(1)
+
+        # 3. all is well, instantiate Command & Control Service
+        command_control_service = CommandControlService(
+            log_settings,
+            configurations_manager,
+            proxy_manager_connection_details,
+            port_range
+        )
+        # 4. start executing Command & Control Service
+        command_control_service.run()
+        sys.exit(0)
+    else:
+        print(f'missing argument[s]; required: 5, received: {len(sys.argv)}')
+        print(f'Argument list received: {str(sys.argv)}')
+        sys.exit(1)

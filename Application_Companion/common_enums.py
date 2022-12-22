@@ -58,6 +58,7 @@ class SERVICE_COMPONENT_CATEGORY(enum.IntEnum):
     STEERING_SERVICE = 3
     INTERSCALE_HUB = 4
     APPLICATION_MANAGER = 5
+    PROXY_MANAGER_SERVER = 6  # manages proxies e.g. registry service proxy
 
 
 @enum.unique

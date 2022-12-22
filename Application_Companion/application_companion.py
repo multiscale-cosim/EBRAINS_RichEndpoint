@@ -13,13 +13,19 @@
 # ------------------------------------------------------------------------------
 import multiprocessing
 import os
+import sys
 import signal
 import pickle
 import time
 import base64
 import zmq
+import inspect
+import subprocess
 
 from common.utils import networking_utils
+from common.utils.security_utils import check_integrity
+from common.utils import deployment_settings_hpc
+from common.utils import multiprocess_utils
 
 from EBRAINS_RichEndpoint.Application_Companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC
@@ -36,10 +42,13 @@ from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
 from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
+from EBRAINS_RichEndpoint.orchestrator import utils
 
 from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
+from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
 
-class ApplicationCompanion(multiprocessing.Process):
+
+class ApplicationCompanion:
     """
     It executes the integrated application as a child process
     and controls its execution flow as per the steering commands.
@@ -49,11 +58,10 @@ class ApplicationCompanion(multiprocessing.Process):
                  proxy_manager_connection_details,
                  port_range=None,
                  port_range_for_application_manager=None):
-        multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
-            name=__name__, log_configurations=self._log_settings
+            name="Application_Companion", log_configurations=self._log_settings
         )
         # actions (applications) to be launched
         self.__actions = actions
@@ -133,27 +141,30 @@ class ApplicationCompanion(multiprocessing.Process):
         """creates communication endpoints"""
         # 1. fetch proxy to Application Manager from registry
         # TODO set as per number of Application Manager defined in XML settings
-        total_application_managers = 1
+        total_application_managers = 4
         application_manager_proxy_list = []
         while len(application_manager_proxy_list) < total_application_managers:
              # wait until it gets Application Manager proxy from Registry
              # TODO handle deadlock here
             self.__logger.debug("looking for Application Manager Proxy in Registry. "
-                                "retry in 1 sec!")
-            time.sleep(1)
-            application_manager_proxy_list.append(
-                self.__get_component_from_registry(
+                                "retry in 0.1 sec!")
+            time.sleep(0.1)
+            application_manager_proxy = self.__get_component_from_registry(
                             SERVICE_COMPONENT_CATEGORY.APPLICATION_MANAGER
-                            ))
+                            )
+            if application_manager_proxy:
+                application_manager_proxy_list = (application_manager_proxy)
+
         # found all proxies related to SERVICE_COMPONENT_CATEGORY.APPLICATION_MANAGER
         self.__logger.debug('found all Application Manager Proxies: '
                             f'{application_manager_proxy_list}')
         # get proxy to Application Manager belong to current action
-        for proxy in application_manager_proxy_list[0]:
+        for proxy in application_manager_proxy_list:
+            self.__logger.debug(f'running proxy: {proxy}, '
+                                f'action id: {self.__action_id}')
             if self.__action_id in proxy.name:
                 self.__application_manager_proxy_list.append(proxy)
-                self.__logger.debug(
-                    'found Application Manager Proxy: '
+                self.__logger.debug('found Application Manager Proxy: '
                     f'{self.__application_manager_proxy_list}')
 
         # 2. fetch Application Manager endpoint set to communicate with
@@ -275,6 +286,57 @@ class ApplicationCompanion(multiprocessing.Process):
 
             return Response.OK
 
+    def __launch_application_manager(self):
+        """
+            launches Application Manager on the target node(s) with required
+            parameters to start executing action
+        """
+        # 1. encode and pickle arguments to Application Manager
+        log_settings = multiprocess_utils.b64encode_and_pickle(self.__logger, self._log_settings)
+        configurations_manager = multiprocess_utils.b64encode_and_pickle(self.__logger, self._configurations_manager)
+        action = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__actions)
+        proxy_manager_connection_details = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__proxy_manager_connection_details)
+        port_range_for_application_manager = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__port_range_for_application_manager)
+        # NOTE by dfault the resource usage monitoring is enabled
+        # TODO configure it via XML
+        enable_resource_usage_monitoring = multiprocess_utils.b64encode_and_pickle(self.__logger, True)
+
+        # NOTE Application Manager should be deployed on the nodes
+        # where the action is going to be executed
+        # 2. get target nodelist of action for deploying the Application Manager
+        action_popen_args = self.__actions['action'].copy()
+        substring = "nodelist"
+        for arg in action_popen_args:
+            if substring in arg:
+                target_nodelist = arg
+                break
+
+        # 3. prepare srun command
+        application_manager_srun_command = deployment_settings_hpc.prepare_srun_command(
+        # logger
+        self.__logger,
+        # path to Proxy Manager Server script
+        inspect.getfile(ApplicationManager),
+        # deployment settings for Application Manager
+        target_nodelist,
+        # parameters for setting up the uniform log settings
+        log_settings,  # log settings
+        configurations_manager,  # Configurations Manager
+        # actions (applications) to be launched
+        action,
+        # connection detials of Registry Proxy Manager
+        proxy_manager_connection_details,
+        # range of ports for Application Manager
+        port_range_for_application_manager,
+        # flag to enable/disable resource usage monitoring
+        # TODO set monitoring enable/disable settings from XML
+        enable_resource_usage_monitoring
+        )
+
+        # 4. launch Application Manager
+        self.__application_manager = subprocess.Popen(
+            application_manager_srun_command, shell=False)
+    
     def __set_up_runtime(self):
         """
         helper function for setting up the runtime such as
@@ -299,27 +361,29 @@ class ApplicationCompanion(multiprocessing.Process):
         
         # create ZMQ endpoints
         self.__zmq_sockets = ZMQSockets(self._log_settings, self._configurations_manager)
+        
         # 3. initialize Application Manager
-        self.__application_manager = ApplicationManager(
-            # parameters for setting up the uniform log settings
-            self._log_settings,  # log settings
-            self._configurations_manager,  # Configurations Manager
-            # actions (applications) to be launched
-            self.__actions,
-            # connection detials of Registry Proxy Manager
-            self.__proxy_manager_connection_details,
-            # range of ports for Application Manager
-            self.__port_range_for_application_manager,
-            # flag to enable/disable resource usage monitoring
-            # TODO set monitoring enable/disable settings from XML
-            enable_resource_usage_monitoring=True
-        )
+        self.__launch_application_manager()
+        # self.__application_manager = ApplicationManager(
+        #     # parameters for setting up the uniform log settings
+        #     self._log_settings,  # log settings
+        #     self._configurations_manager,  # Configurations Manager
+        #     # actions (applications) to be launched
+        #     self.__actions,
+        #     # connection detials of Registry Proxy Manager
+        #     self.__proxy_manager_connection_details,
+        #     # range of ports for Application Manager
+        #     self.__port_range_for_application_manager,
+        #     # flag to enable/disable resource usage monitoring
+        #     # TODO set monitoring enable/disable settings from XML
+        #     enable_resource_usage_monitoring=True
+        # )
 
-        # 4. start the application Manager
-        self.__logger.debug("starting application Manager.")
-        self.__application_manager.start()
+        # # 4. start the application Manager
+        # self.__logger.debug("starting application Manager.")
+        # self.__application_manager.start()
         # wait a bit to let the Application Manager setup and register with registry
-        time.sleep(0.5)
+        time.sleep(0.1)
         # setup channel with Application Manager
         self.__set_up_channel_with_app_manager()
         
@@ -509,9 +573,9 @@ class ApplicationCompanion(multiprocessing.Process):
         while len(interscalehub_proxy_list) < total_interscaleHubs:
             # wait until it gets InterscaleHub proxy from Registry
             # TODO handle deadlock here
-            self.__logger.info("waiting for InterscaleHub connection details. "
-                               "retry in 1 sec!")
-            time.sleep(1)
+            self.__logger.debug("waiting for InterscaleHub connection details. "
+                               "retry in 0.1 sec!")
+            time.sleep(0.1)
             interscalehub_proxy_list =\
                 self.__health_registry_manager_proxy.find_all_by_category(
                     SERVICE_COMPONENT_CATEGORY.INTERSCALE_HUB)
@@ -614,9 +678,9 @@ class ApplicationCompanion(multiprocessing.Process):
         # action id is retrieved
         return Response.OK
     
-    def __execute_init_command(self):
+    def __execute_init_command(self, control_command):
         """helper function to execute INIT steering command"""
-        self.__logger.info("Executing INIT command!")
+        self.__logger.info("Executing INIT command")
         # 1. update local state
         self.__ac_registered_component_service =\
             self.__update_local_state(SteeringCommands.INIT)
@@ -654,14 +718,16 @@ class ApplicationCompanion(multiprocessing.Process):
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
             action_with_parameters = self.__actions['action']
-            action_with_parameters.append(base64.b64encode(
-                        pickle.dumps(interscalehub_mpi_endpoints)))
+            action_with_parameters.append(
+                multiprocess_utils.b64encode_and_pickle(self.__logger, interscalehub_mpi_endpoints))
             self.__actions['action'] = action_with_parameters
 
         # 4. send INIT command to Application Manager
         steering_command = SteeringCommands.INIT
-        command = self.__prepare_command(steering_command, self.__actions)
-        self.__send_command_to_application_manager(command)
+        # update control command with action parameters
+        control_command.update_paramters(self.__actions)
+        self.__send_command_to_application_manager(
+            multiprocess_utils.b64encode_and_pickle(self.__logger, control_command))
 
         # 5. wait until a response is received from Application Manager after
         # command execution
@@ -689,16 +755,11 @@ class ApplicationCompanion(multiprocessing.Process):
         # 6. send response to Orchestrator
         self.__send_response_to_orchestrator(response)
         return self.__command_execution_response(response, steering_command)
-    
-    def __prepare_command(self, steering_command, parameters):
-        command = {COMMANDS.STEERING_COMMAND.name: steering_command,
-                   COMMANDS.PARAMETERS.name: parameters}
-        self.__logger.debug(f"prepared the command: {command}")
-        return command
 
-    def __execute_start_command(self):
+    def __execute_start_command(self, control_command):
         """helper function to execute START steering command"""
-        self.__logger.info("Executing START command!")
+        steering_command, _ = control_command.parse()
+        self.__logger.info("Executing START command")
 
         # 1. update local state
         self.__ac_registered_component_service = self.__update_local_state(SteeringCommands.START)
@@ -708,11 +769,9 @@ class ApplicationCompanion(multiprocessing.Process):
             return self.__respond_with_state_update_error()
 
         # 2. start the application execution
-        # send START command to Application Manager
-        steering_command = SteeringCommands.START
-        # TODO send minimum step size as parameters with steering command
-        command = self.__prepare_command(steering_command, None)
-        self.__send_command_to_application_manager(command)
+        # send START command with global minimum step size
+        self.__send_command_to_application_manager(
+            multiprocess_utils.b64encode_and_pickle(self.__logger, control_command))
 
         # 3. wait until a response is received from Application Manager after
         # command execution
@@ -722,9 +781,10 @@ class ApplicationCompanion(multiprocessing.Process):
         self.__send_response_to_orchestrator(response)
         return self.__command_execution_response(response, steering_command)
 
-    def __execute_end_command(self):
+    def __execute_end_command(self, control_command):
         """helper function to execute END steering command"""
-        self.__logger.info("Executing END command!")
+        steering_command, _ = control_command.parse()
+        self.__logger.info("Executing END command")
         # 1. update local state
         self.__ac_registered_component_service = self.__update_local_state(SteeringCommands.END)
         if self.__ac_registered_component_service == Response.ERROR:
@@ -733,10 +793,8 @@ class ApplicationCompanion(multiprocessing.Process):
             return self.__respond_with_state_update_error()
 
         # 2. send END command to Application Manager
-        steering_command = SteeringCommands.END
-        command = self.__prepare_command(steering_command, None)
-        self.__send_command_to_application_manager(command)
-        # self.__send_command_to_application_manager(steering_command)
+        self.__send_command_to_application_manager(
+            multiprocess_utils.b64encode_and_pickle(self.__logger, control_command))
 
         # 3. wait until a response is received from Application Manager after
         # command execution
@@ -798,11 +856,14 @@ class ApplicationCompanion(multiprocessing.Process):
         while True:
             # 1. fetch the Steering Command
             self.__logger.debug("waiting for steering command")
-            # receive steering command from broadcast
-            current_steering_command = self.__receive_broadcast()
-            self.__logger.debug(f"got the command {current_steering_command.name}")
+            # receive Control Command object from broadcast
+            command = self.__receive_broadcast()
+            # parse the command to get the ControlCommand object and the
+            # current steering command
+            control_command, current_steering_command, _ = utils.parse_command(
+                self.__logger, command)
             # 2. execute the current steering command
-            if command_execution_choices[current_steering_command]() ==\
+            if command_execution_choices[current_steering_command](control_command) ==\
                     Response.ERROR:
                 # something went wrong, terminate loudly with error
                 try:
@@ -834,6 +895,9 @@ class ApplicationCompanion(multiprocessing.Process):
         ii. executes the application and manages the flow
         as per steering commands.
         """
+        self.__logger.info("running at hostname: "
+                           f"{networking_utils.my_host_name()}, "
+                           f"ip: {networking_utils.my_ip()}")
         # i. setup the necessary settings for runtime such as
         # to register with registry, etc.
         if self.__set_up_runtime() is Response.ERROR:
@@ -842,3 +906,54 @@ class ApplicationCompanion(multiprocessing.Process):
 
         # ii. loop for fetching and executing the steering commands
         return self.__fetch_and_execute_steering_commands()
+
+if __name__ == '__main__':
+    if len(sys.argv)==7:
+        # TODO better handling of arguments parsing
+        
+        # 1. unpickle objects
+        # unpickle log_settings
+        log_settings = pickle.loads(base64.b64decode(sys.argv[1]))
+        # unpickle configurations_manager object
+        configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
+        # get actions (applications) to be launched
+        action = pickle.loads(base64.b64decode(sys.argv[3]))
+        # unpickle connection detials of Registry Proxy Manager object
+        proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[4]))
+        # unpickle range of ports for Application Companion
+        port_range_for_application_companions = pickle.loads(base64.b64decode(sys.argv[5]))
+        # unpickle range of ports for Application Manager
+        port_range_for_application_manager = pickle.loads(base64.b64decode(sys.argv[6]))
+        
+        # 2. security check of pickled objects
+        # it raises an exception, if the integrity is compromised
+        try:
+            check_integrity(configurations_manager, ConfigurationsManager)
+            check_integrity(log_settings, dict)
+            check_integrity(action, dict)
+            check_integrity(proxy_manager_connection_details, dict)
+            check_integrity(port_range_for_application_companions, dict)
+            check_integrity(port_range_for_application_manager, dict)
+        except Exception as e:
+            # NOTE an exception is already raised with context when checking
+            # the integrity
+            print(f'pickled object is not an instance of expected type!. {e}')
+            sys.exit(1)
+
+        # 3. all is well, instantiate Application Companion
+        application_companion = ApplicationCompanion(
+                                        log_settings,
+                                        configurations_manager,
+                                        action,
+                                        proxy_manager_connection_details,
+                                        port_range_for_application_companions,
+                                        port_range_for_application_manager)    
+        # 4. start executing Application Companion
+        print("launching Applicaiton Companion")
+        application_companion.run()
+        sys.exit(0)
+    else:
+        print(f'missing argument[s]; required: 7, received: {len(sys.argv)}')
+        print(f'Argument list received: {str(sys.argv)}')
+        sys.exit(1)
+    

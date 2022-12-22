@@ -26,7 +26,7 @@ class Process:
     with Knowledge Graph (KG).
     '''
     def __init__(self, log_settings, configurations_manager,
-                 action_process_name, pid=None, path_to_read_stats=" "
+                 action_process_name, pid, process_affinity, path_to_read_stats=" "
                  ):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -45,6 +45,7 @@ class Process:
             self.__get_process_meta_information(
                 self._path_to_read_stats)
         self.__process_execution_time = 0
+        self.__process_affinity = process_affinity
         self.__cpu_usage = CPUUsage(
                         process_id=pid,
                         log_settings=self._log_settings,
@@ -55,6 +56,14 @@ class Process:
                         configurations_manager=self._configurations_manager)
         self.__resource_usage_summary = ResourceUsageSummary()
 
+    @property
+    def process_id(self):
+        return self.__process_id
+
+    @property
+    def process_affinity(self):
+        return self.__process_affinity
+    
     @property
     def process_name(self):
         return self.__process_name
@@ -73,11 +82,25 @@ class Process:
         self.__process_execution_time = execution_time
 
     @property
-    def cpu_usage_stats(self):
+    def per_cpu_usage_stats(self):
+        stats = self.all_cpus_usage_stats.copy()
+        self.__logger.debug(f"all_cpus_usage_stats:{stats}")
+        if len(self.__process_affinity) == 1:
+            per_cpu_avg_usage = self.all_cpus_usage_stats
+        else:
+            per_cpu_avg_usage =\
+                list(map(lambda value: 
+                     [value[0], value[1] / len(self.__process_affinity) * 100],
+                     stats))
+        self.__logger.debug(f"per_cpu_avg_usage:{per_cpu_avg_usage}")
+        return  per_cpu_avg_usage
+
+    @property
+    def all_cpus_usage_stats(self):
         return self.__resource_usage_summary.cpu_usage_stats
 
-    @cpu_usage_stats.setter
-    def cpu_usage_stats(self, cpu_usage):
+    @all_cpus_usage_stats.setter
+    def all_cpus_usage_stats(self, cpu_usage):
         self.__resource_usage_summary.cpu_usage_stats.append(cpu_usage)
 
     @property
@@ -92,7 +115,11 @@ class Process:
     def mean_cpu_usage(self): 
         """returns the mean of total cpu usage"""
         # comput the mean from list of tuples: [(timnestamp, cpu_usage_stats)]
-        return self.__resource_usage_summary.mean_cpu_usage
+        avg_usage_per_cpu = self.per_cpu_usage_stats.copy()
+        # mean_usage = ((avg_usage_per_cpu/ len(self.__process_affinity))*100)
+        mean_usage = self.__resource_usage_summary.mean_cpu_usage(avg_usage_per_cpu)
+        self.__logger.debug(f"mean_cpu_usage:{mean_usage}")
+        return mean_usage
         
     @property
     def mean_memory_usage(self):
@@ -101,12 +128,17 @@ class Process:
         return self.__resource_usage_summary.mean_memory_usage
 
     def get_cpu_stats(self):
+        """
+            returns the cpu usage with time-stamp and the current exection time
+            of the process.
+        """
         timestamp, current_cpu_usage_stats, process_running_time = \
             self.__cpu_usage.get_usage_stats()
         self.__process_execution_time = process_running_time
         return timestamp, current_cpu_usage_stats, process_running_time
 
     def get_memory_stats(self):
+        """returns the memory usage stats with time-stamp"""
         return self.__memory_usage.get_usage_stats()
 
     def __get_process_meta_information(self, proc_stat_file):

@@ -46,6 +46,8 @@ class ProxyManagerClient:
         '''
         class Manager(BaseManager): pass
         Manager.register('ServiceRegistryManager')
+        Manager.register('stop_server')
+        self.__logger.debug(f"IP: {ip}, port:{port}, key:{key}")
         self.__proxy_manager_client = Manager(address=(ip, port), authkey=key)
         try:
             self.__proxy_manager_client.connect()
@@ -61,6 +63,9 @@ class ProxyManagerClient:
         # Case b: connection is established. Get proxy to registry manager
         self.__logger.debug("Connection is established")
         return Response.OK
+
+    def stop_server(self):
+        self.__proxy_manager_client.stop_server()
 
     def get_registry_proxy(self):
         '''
