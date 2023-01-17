@@ -729,7 +729,7 @@ if __name__ == '__main__':
         log_settings = pickle.loads(base64.b64decode(sys.argv[1]))
         # unpickle configurations_manager object
         configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
-        # unpickle connection detials of Registry Proxy Manager object
+        # unpickle connection details of Registry Proxy Manager object
         proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[3]))
         # unpickle range of ports for Orchestrator
         port_range = pickle.loads(base64.b64decode(sys.argv[4]))

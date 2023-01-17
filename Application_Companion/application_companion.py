@@ -57,7 +57,8 @@ class ApplicationCompanion:
     def __init__(self, log_settings, configurations_manager, actions,
                  proxy_manager_connection_details,
                  port_range=None,
-                 port_range_for_application_manager=None):
+                 port_range_for_application_manager=None,
+                 is_execution_environment_hpc=False):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -91,6 +92,7 @@ class ApplicationCompanion:
         )
         self.__port_range = port_range
         self.__port_range_for_application_manager = port_range_for_application_manager
+        self.__is_execution_environment_hpc = is_execution_environment_hpc
         # restrict Application Companion to a single core (i.e core 1) only
         # so not to interrupt the execution of the main application
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
@@ -144,8 +146,8 @@ class ApplicationCompanion:
         total_application_managers = 4
         application_manager_proxy_list = []
         while len(application_manager_proxy_list) < total_application_managers:
-             # wait until it gets Application Manager proxy from Registry
-             # TODO handle deadlock here
+            # wait until it gets Application Manager proxy from Registry
+            # TODO handle deadlock here
             self.__logger.debug("looking for Application Manager Proxy in Registry. "
                                 "retry in 0.1 sec!")
             time.sleep(0.1)
@@ -173,7 +175,7 @@ class ApplicationCompanion:
         # TODO change it later to create a list when more Application Managers
         # are launched
 
-        # Case: communicate using Shared Queues
+        # Case a: communicate using Shared Queues
         # TODO handle the case of shared queues
         # NOTE the functionality using queues is not tested yet and may be broken
         # if the range of ports are not provided then use the shared queues
@@ -299,44 +301,60 @@ class ApplicationCompanion:
         port_range_for_application_manager = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__port_range_for_application_manager)
         # NOTE by dfault the resource usage monitoring is enabled
         # TODO configure it via XML
-        enable_resource_usage_monitoring = multiprocess_utils.b64encode_and_pickle(self.__logger, True)
+        is_resource_usage_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(self.__logger, True)
+        is_execution_environment_hpc = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_execution_environment_hpc)
 
         # NOTE Application Manager should be deployed on the nodes
         # where the action is going to be executed
         # 2. get target nodelist of action for deploying the Application Manager
-        action_popen_args = self.__actions['action'].copy()
-        substring = "nodelist"
-        for arg in action_popen_args:
-            if substring in arg:
-                target_nodelist = arg
-                break
+        target_nodelist = None
+        if self.__is_execution_environment_hpc:
+            action_popen_args = self.__actions['action'].copy()
+            substring = "nodelist"
+            for arg in action_popen_args:
+                if substring in arg:
+                    target_nodelist = arg
+                    break
+            self.__logger.info(f"target_nodelist: {target_nodelist}")
 
-        # 3. prepare srun command
-        application_manager_srun_command = deployment_settings_hpc.prepare_srun_command(
-        # logger
-        self.__logger,
-        # path to Proxy Manager Server script
-        inspect.getfile(ApplicationManager),
-        # deployment settings for Application Manager
-        target_nodelist,
-        # parameters for setting up the uniform log settings
-        log_settings,  # log settings
-        configurations_manager,  # Configurations Manager
-        # actions (applications) to be launched
-        action,
-        # connection detials of Registry Proxy Manager
-        proxy_manager_connection_details,
-        # range of ports for Application Manager
-        port_range_for_application_manager,
-        # flag to enable/disable resource usage monitoring
-        # TODO set monitoring enable/disable settings from XML
-        enable_resource_usage_monitoring
-        )
+        # 3. set arguments for Application Manager
+        args_for_application_manager = [
+            # parameters for setting up the uniform log settings
+            log_settings,  # log settings
+            configurations_manager,  # Configurations Manager
+            # actions (applications) to be launched
+            action,
+            # connection details of Registry Proxy Manager
+            proxy_manager_connection_details,
+            # range of ports for Application Manager
+            port_range_for_application_manager,
+            # flag to enable/disable resource usage monitoring
+            # TODO set monitoring enable/disable settings from XML
+            is_resource_usage_monitoring_enabled,
+            # flag to indicate if the target environment is HPC
+            is_execution_environment_hpc]
 
-        # 4. launch Application Manager
+        # 4. prepare srun command
+        command_to_run_application_manager = deployment_settings_hpc.deployment_command(
+            # logger
+            self.__logger,
+            # flag to determine target deployment platform
+            self.__is_execution_environment_hpc,
+            # path to Service component script to be executed
+            inspect.getfile(ApplicationManager),
+            # Cosim default nodelist for Application Manager
+            None,
+            # target nodelist in srun command for Application Manager
+            target_nodelist,
+            # application specific arguments
+            args_for_application_manager
+            )
+        self.__logger.debug(f"deployment command: "
+                            f"{command_to_run_application_manager}")
+        # 5. launch Application Manager
         self.__application_manager = subprocess.Popen(
-            application_manager_srun_command, shell=False)
-    
+            command_to_run_application_manager, shell=False)
+
     def __set_up_runtime(self):
         """
         helper function for setting up the runtime such as
@@ -908,7 +926,7 @@ class ApplicationCompanion:
         return self.__fetch_and_execute_steering_commands()
 
 if __name__ == '__main__':
-    if len(sys.argv)==7:
+    if len(sys.argv)==8:
         # TODO better handling of arguments parsing
         
         # 1. unpickle objects
@@ -918,12 +936,14 @@ if __name__ == '__main__':
         configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
         # get actions (applications) to be launched
         action = pickle.loads(base64.b64decode(sys.argv[3]))
-        # unpickle connection detials of Registry Proxy Manager object
+        # unpickle connection details of Registry Proxy Manager object
         proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[4]))
         # unpickle range of ports for Application Companion
         port_range_for_application_companions = pickle.loads(base64.b64decode(sys.argv[5]))
         # unpickle range of ports for Application Manager
         port_range_for_application_manager = pickle.loads(base64.b64decode(sys.argv[6]))
+        # unpickle the flag indicating if target platform for deployment is HPC
+        is_execution_environment_hpc = pickle.loads(base64.b64decode(sys.argv[7]))
         
         # 2. security check of pickled objects
         # it raises an exception, if the integrity is compromised
@@ -934,6 +954,7 @@ if __name__ == '__main__':
             check_integrity(proxy_manager_connection_details, dict)
             check_integrity(port_range_for_application_companions, dict)
             check_integrity(port_range_for_application_manager, dict)
+            check_integrity(is_execution_environment_hpc, bool)
         except Exception as e:
             # NOTE an exception is already raised with context when checking
             # the integrity
@@ -947,13 +968,14 @@ if __name__ == '__main__':
                                         action,
                                         proxy_manager_connection_details,
                                         port_range_for_application_companions,
-                                        port_range_for_application_manager)    
+                                        port_range_for_application_manager,
+                                        is_execution_environment_hpc)
         # 4. start executing Application Companion
         print("launching Applicaiton Companion")
         application_companion.run()
         sys.exit(0)
     else:
-        print(f'missing argument[s]; required: 7, received: {len(sys.argv)}')
+        print(f'missing argument[s]; required: 8, received: {len(sys.argv)}')
         print(f'Argument list received: {str(sys.argv)}')
         sys.exit(1)
     

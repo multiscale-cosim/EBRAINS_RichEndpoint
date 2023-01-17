@@ -49,7 +49,7 @@ from EBRAINS_RichEndpoint.orchestrator import utils
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.default_directories_enum import DefaultDirectories
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
 
-class ApplicationManager(multiprocessing.Process):
+class ApplicationManager:
     """
     i).  Executes the action (application) as a child process,
     ii). Monitors its resource usage, and
@@ -65,8 +65,9 @@ class ApplicationManager(multiprocessing.Process):
                  # range of ports for Application Manager
                  port_range_for_application_manager,
                  # flag to enable/disable resource usage monitoring
-                 enable_resource_usage_monitoring=True):
-        multiprocessing.Process.__init__(self)
+                 enable_resource_usage_monitoring=True,
+                 is_execution_environment_hpc=False):
+        # multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -91,8 +92,8 @@ class ApplicationManager(multiprocessing.Process):
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
 
-       
-       # range of ports for Application Manager
+        self.__is_execution_environment_hpc = is_execution_environment_hpc
+        # range of ports for Application Manager
         self.__port_range_for_application_manager = port_range_for_application_manager
         self.__application_manager_in_queue = None
         self.__application_manager_out_queue = None
@@ -159,10 +160,10 @@ class ApplicationManager(multiprocessing.Process):
         """
         # NOTE: core 1 is bound to the application manager itself,
         # rest are bound to the main application.
-       # bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
-        #                             self.__legitimate_cpu_cores))
-        bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
-                                     8))
+        bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
+                                     self.__legitimate_cpu_cores))
+        # bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
+        #                              8))
         return self.__affinity_manager.set_affinity(pid, bind_with_cores)
 
     def __launch_application(self, application):
@@ -211,19 +212,21 @@ class ApplicationManager(multiprocessing.Process):
         # NOTE disabling the functionality for hpc becuase it is set directly
         # in 'srun' command given to subprocess.Popen
 
-        # if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
-        #     # affinity could not be set, log exception with traceback
-        #     # NOTE: application is launched with no defined affinity mask
-        #     try:
-        #         # raise runtime exception
-        #         raise (RuntimeError)
-        #     except RuntimeError:
-        #         # log the exception with traceback details
-        #         self.__logger.exception(
-        #             self.__logger,
-        #             f'affinity could not be set for '
-        #             f'<{self.__actions_id}>:'
-        #             f'{self.__popen_process.pid}')
+        if not is_execution_environment_hpc:
+            self.__logger.info(f'setting affinity for {self.__popen_process.pid}')
+            if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
+                # affinity could not be set, log exception with traceback
+                # NOTE: application is launched with no defined affinity mask
+                try:
+                    # raise runtime exception
+                    raise (RuntimeError)
+                except RuntimeError:
+                    # log the exception with traceback details
+                    self.__logger.exception(
+                        self.__logger,
+                        f'affinity could not be set for '
+                        f'<{self.__actions_id}>:'
+                        f'{self.__popen_process.pid}')
 
         # Otherwise, everything goes right
         self.__logger.info(f'<{self.__actions_id}> starts execution')
@@ -1049,7 +1052,7 @@ class ApplicationManager(multiprocessing.Process):
 
 
 if __name__ == '__main__':
-    if len(sys.argv)==7:
+    if len(sys.argv)==8:
         # TODO better handling of arguments parsing        
 
         # 1. unpickle objects
@@ -1059,12 +1062,14 @@ if __name__ == '__main__':
         configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
         # get actions (applications) to be launched
         action = pickle.loads(base64.b64decode(sys.argv[3]))
-        # unpickle connection detials of Registry Proxy Manager object
+        # unpickle connection details of Registry Proxy Manager object
         proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[4]))
         # unpickle range of ports for Application Manager
         port_range_for_application_manager = pickle.loads(base64.b64decode(sys.argv[5]))
         # flag to enable/disable resource usage monitoring
         enable_resource_usage_monitoring = pickle.loads(base64.b64decode(sys.argv[6]))
+        # unpickle the flag indicating if target platform for deployment is HPC
+        is_execution_environment_hpc = pickle.loads(base64.b64decode(sys.argv[7]))
         
         # 2. security check of pickled objects
         # it raises an exception, if the integrity is compromised
@@ -1075,6 +1080,7 @@ if __name__ == '__main__':
             check_integrity(proxy_manager_connection_details, dict)
             check_integrity(port_range_for_application_manager, dict)
             check_integrity(enable_resource_usage_monitoring, bool)
+            check_integrity(is_execution_environment_hpc, bool)
         except Exception as e:
             # NOTE an exception is already raised with context when checking the 
             # integrity
@@ -1088,13 +1094,14 @@ if __name__ == '__main__':
             action,
             proxy_manager_connection_details,
             port_range_for_application_manager,
-            enable_resource_usage_monitoring
+            enable_resource_usage_monitoring,
+            is_execution_environment_hpc
         )    
         # 4. start executing Application Manager
         print("launching Applicaiton Manager")
         application_manager.run()
         sys.exit(0)
     else:
-        print(f'missing argument[s]; required: 7, received: {len(sys.argv)}')
+        print(f'missing argument[s]; required: 8, received: {len(sys.argv)}')
         print(f'Argument list received: {str(sys.argv)}')
         sys.exit(1)

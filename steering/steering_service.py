@@ -39,8 +39,8 @@ class SteeringService:
     def __init__(self, log_settings,
                  configurations_manager,
                  proxy_manager_connection_details,
-                 is_communicate_via_zmqs = False,
-                 is_interactive = False):
+                 is_communicate_via_zmqs=False,
+                 is_interactive=False):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -52,18 +52,18 @@ class SteeringService:
         self.__proxy_manager_client = None
         self.__current_legitimate_choice = 0
         self.__steering_menu_handler = SteeringMenuCLIHandler()
-        
+
         # get proxy of registry manager
         self.__connect_to_registry_manager(proxy_manager_connection_details)
-        
+
         # register with registry manager
         self.__register_with_registry()
 
         # set up communication channels with orchestrator
         self.__setup_channel_with_orchestrator(is_communicate_via_zmqs)
-       
+
         self.__logger.debug('steering service initialized.')
-    
+
     def __connect_to_registry_manager(self,proxy_manager_connection_details):
         """ needed to check if all necessary components are registered """
         # get client to Proxy Manager Server
@@ -82,28 +82,29 @@ class SteeringService:
         self.__health_registry_manager_proxy =\
             self.__proxy_manager_client.get_registry_proxy()
         return Response.OK
-    
+
     def __register_with_registry(self):
         """
         helper function for registering with registry service
         """
         # register with registry
         if (self.__health_registry_manager_proxy.register(
-            os.getpid(), # id
-            SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE, # name
-            SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE, # category
-            None, # endpoint (needed if another component wants to connect)
-            SERVICE_COMPONENT_STATUS.UP, # current status
-            None) == Response.OK): # current state
-                self.__logger.info('Steering service is registered.')
-                return Response.OK
+                os.getpid(), # id
+                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE,  # name
+                SERVICE_COMPONENT_CATEGORY.STEERING_SERVICE,  # category
+                None,  # endpoint (needed if another component wants to connect)
+                SERVICE_COMPONENT_STATUS.UP,  # current status
+                None) == Response.OK):  # current state
+
+            self.__logger.info('Steering service is registered.')
+            return Response.OK
         else:
             return self.__terminate_with_error("Steering Service could not be registered")
-    
+
     def __setup_channel_with_orchestrator(self, is_communicate_via_zmqs):
         """
-        setsup C&C channels with orchestrator, ZMQ or shared queues.
-        
+        sets up C&C channels with orchestrator, ZMQ or shared queues.
+
         Parameters
         ----------
         is_communicate_via_zmqs: bool
@@ -111,7 +112,7 @@ class SteeringService:
         """
         # get proxy to Orchestrator registered component
         orchestrator_component = self.__health_registry_manager_proxy.\
-                find_all_by_category(SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
+            find_all_by_category(SERVICE_COMPONENT_CATEGORY.ORCHESTRATOR)
 
         # set up communiation channel with Orchestrator
         # Case a, setup communication channel using Shared Queues
@@ -125,7 +126,7 @@ class SteeringService:
                                                     self._configurations_manager)
             self.__orchestrator_in_queue = orchestrator_in_queue
             self.__orchestrator_out_queue = orchestrator_out_queue
-        
+
         # Case b, setup communication channel using 0MQs
         else:
             orchestrator_endpoint = \
@@ -146,7 +147,7 @@ class SteeringService:
             self.__logger.info("C&C channel - connected with Orchestrator to send "
                            f"commands at {orchestrator_endpoint.IP}:{orchestrator_endpoint.port}")
             self.__orchestrator_in_queue = self.__orchestrator_out_queue = req_endpoint_with_orchestrator
-        
+
         return Response.OK
 
     def __get_steering_menu_item(self, command):
@@ -208,7 +209,7 @@ class SteeringService:
 
         # 5. parse and return the response
         return self.__parse_response(response)
-    
+
     def __get_responses(self):
         '''
         helper function for receiving the responses from Orchestrator
@@ -229,7 +230,7 @@ class SteeringService:
                                                'Quitting!')
         else:
             return response
-    
+
     def __terminate_with_error(self, error_message):
         try:
             # raise run time error exception
@@ -239,7 +240,7 @@ class SteeringService:
             self.__logger.exception(error_message)
         # terminate with error
         return Response.ERROR
-    
+
     def start_steering(self):
         '''
         starts the steering menu handler 
@@ -269,9 +270,9 @@ class SteeringService:
             # terminate with error
             return self.__terminate_with_error('Error executing INIT command. '
                                                'Quitting!')
-        
+
         # Step 2. non-system actions
-        self.__current_legitimate_choice = 1 # currently: 1 = INIT
+        self.__current_legitimate_choice = 1  # currently: 1 = INIT
         # Step 2a. interactive mode with steering menu
         if self._is_interactive:
             user_choice = 0
@@ -285,7 +286,7 @@ class SteeringService:
                 user_choice += 1  # add 1 because INIT=1 is already done as a system action
                 # parse user choice
                 user_choice =\
-                  self.__steering_menu_handler.parse_user_choice(user_choice)
+                    self.__steering_menu_handler.parse_user_choice(user_choice)
                 # terminate if current choice is 'Exit'
                 if user_choice == SteeringCommands.EXIT:
                     print("Exiting...")
@@ -304,35 +305,36 @@ class SteeringService:
             for current_choice in self.__steering_menu_handler.all_steering_commands:
                 # terminate if current_choice is 'Exit'
                 if current_choice == SteeringCommands.EXIT:
-                    print("Exiting...")
-                    break # if EXIT is not already the last menu item
+                    print("Concluding the Steering Menu Service")
+                    break  # if EXIT is not already the last menu item
 
-                # SAFETY check: increment the index of currently valid menu choice
+                # SAFETY check: increment the index of currently valid menu
+                # choice
                 self.__current_legitimate_choice += 1
                 response = self.__execute_if_validated(current_choice)
-                # no check if reponse==Response.NOT_VALID_COMMAND
+                # no check if response==Response.NOT_VALID_COMMAND
 
         # SteeringCommands.EXIT executed --> terminate the steering (menu)
         return Response.OK
 
 
 if __name__ == '__main__':
-    if len(sys.argv)==6:
+    if len(sys.argv) == 6:
         # TODO better handling of arguments parsing
-        
+
         # 1. unpickle objects
         # unpickle log_settings
         log_settings = pickle.loads(base64.b64decode(sys.argv[1]))
         # unpickle configurations_manager object
         configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
-        # unpickle connection detials of Registry Proxy Manager object
+        # unpickle connection details of Registry Proxy Manager object
         proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[3]))
         # flag to indicate the communication channel e.g. 0MQ or Shared Queues
         is_communicate_via_zmqs = pickle.loads(base64.b64decode(sys.argv[4]))
         # flag to indicate whether the steering is interactive
         # is_interactive = pickle.loads(base64.b64decode(sys.argv[5]))
         is_interactive = pickle.loads(base64.b64decode(sys.argv[5]))
-        
+
         # 2. security check of pickled objects
         # it raises an exception, if the integrity is compromised
         try:
@@ -342,8 +344,8 @@ if __name__ == '__main__':
             check_integrity(is_communicate_via_zmqs, bool)
             check_integrity(is_interactive, bool)
         except Exception as e:
-            # NOTE an exception is already raised with context when checking the 
-            # integrity
+            # NOTE an exception is already raised with context when checking
+            # the integrity
             print('pickled object is not an instance of expected type!.')
             print(f'Traceback: {e}')
             sys.exit(1)
