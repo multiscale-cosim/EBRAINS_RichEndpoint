@@ -21,6 +21,9 @@ from common.utils import networking_utils
 from common.utils import deployment_settings_hpc
 from common.utils import multiprocess_utils
 
+from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers.xml_tags \
+    import CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SRUN_OPTIONS, \
+    CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SETTINGS
 from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
 import EBRAINS_RichEndpoint.Application_Companion.application_companion as ApplicationCompanion
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_server import ProxyManagerServer
@@ -39,7 +42,7 @@ class LauncherHPC:
     def __init__(self, log_settings, configurations_manager,
                  proxy_manager_server_address=None,
                  communication_settings_dict=None,
-                 xml_deployment_settings_hpc=None,
+                 services_deployment_dict=None,
                  is_execution_environment_hpc=False):
 
         self._log_settings = log_settings
@@ -111,25 +114,37 @@ class LauncherHPC:
             self.__cosim_slurm_nodes_mapping = None
             self.__srun_command_for_cosim = None
             self.__ms_components_deployment_settings = None
-            self.__init_deployment_settings(xml_deployment_settings_hpc)
+            self.__init_deployment_settings(services_deployment_dict)
 
         self.__logger.debug("initialized.")
 
-    def __init_deployment_settings(self, xml_deployment_settings_hpc):
+    def __init_deployment_settings(self, services_deployment_dict):
         """helper function to initialize deployment settings for components"""
-        if xml_deployment_settings_hpc is None:
+
+        if services_deployment_dict is None:
             # Case a, initialize with settings defined in
             # deployment_settings_hpc.py script located in common/utils
             self.__cosim_slurm_nodes_mapping = deployment_settings_hpc.cosim_slurm_nodes_mapping(self.__logger)
             self.__srun_command_for_cosim = deployment_settings_hpc.default_srun_command.copy()
             self.__ms_components_deployment_settings = deployment_settings_hpc.deployment_settings.copy()
-            self.__logger.debug("initialized the deployment settings from XML")
+            self.__logger.debug("initialized the deployment settings from utils")
         else:
             # Case b, initialize with settings defined in XML configurations
-            self.__cosim_slurm_nodes_mapping = xml_deployment_settings_hpc.cosim_slurm_nodes_mapping()
-            self.__srun_command_for_cosim = xml_deployment_settings_hpc.default_srun_command.copy()
-            self.__ms_components_deployment_settings = xml_deployment_settings_hpc.deployment_settings.copy()
-            self.__logger.debug("initialized the deployment settings from utils")
+
+            # b.1 - Assigning current HPC node names (e.g. jsc056) to the CO_SIM_SLURM_NODE_NNN variables.
+            # __original__: self.__cosim_slurm_nodes_mapping = services_deployment_dict.cosim_slurm_nodes_mapping()
+            self.__cosim_slurm_nodes_mapping = deployment_settings_hpc.cosim_slurm_nodes_mapping(self.__logger)
+
+            # b.2 - srun options
+            # __original__: self.__srun_command_for_cosim = services_deployment_dict.default_srun_command.copy()
+            self.__srun_command_for_cosim = \
+                services_deployment_dict[CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SRUN_OPTIONS]
+            # b.3 - Co-Sim components HPC nodes arrangement
+            # __original__:
+            # self.__ms_components_deployment_settings = services_deployment_dict.deployment_settings.copy()
+            self.__ms_components_deployment_settings = \
+                services_deployment_dict[CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SETTINGS]
+            self.__logger.debug("initialized the deployment settings from XML")
 
     def __set_up_port_range_for_components(self):
         '''
