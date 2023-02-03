@@ -6,7 +6,7 @@
   <!-- <a href="git@github.com:multiscale-cosim/EBRAINS-RichEndpoint.git">Demo</a> -->
 </div>
 
-<h1 align="center">EBRAINS-RichEndpoint</h1>
+<h1 align="center">Modular Science: EBRAINS-RichEndpoint</h1>
 
 <p align="center">
   <img alt="Github top language" src="https://img.shields.io/github/languages/top/multiscale-cosim/EBRAINS-RichEndpoint?color=56BEB8" />
@@ -27,7 +27,7 @@
 ## Status
 
 <h4 align="center"> 
-	🚧  EBRAINS-RichEndpoint 🚀 Under construction...  🚧
+	🚧 Modular Science: Multi-scaleCo-simulation - EBRAINS-RichEndpoint 🚧
 </h4> 
 
 <hr>
