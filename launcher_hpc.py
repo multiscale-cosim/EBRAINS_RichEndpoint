@@ -133,7 +133,8 @@ class LauncherHPC:
 
             # b.1 - Assigning current HPC node names (e.g. jsc056) to the CO_SIM_SLURM_NODE_NNN variables.
             # __original__: self.__cosim_slurm_nodes_mapping = services_deployment_dict.cosim_slurm_nodes_mapping()
-            self.__cosim_slurm_nodes_mapping = deployment_settings_hpc.cosim_slurm_nodes_mapping(self.__logger)
+            # __to_be_removed __:
+            # self.__cosim_slurm_nodes_mapping = deployment_settings_hpc.cosim_slurm_nodes_mapping(self.__logger)
 
             # b.2 - srun options
             # __original__: self.__srun_command_for_cosim = services_deployment_dict.default_srun_command.copy()
