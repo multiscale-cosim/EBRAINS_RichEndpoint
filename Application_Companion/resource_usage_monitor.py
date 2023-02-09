@@ -45,10 +45,12 @@ class ResourceUsageMonitor:
         self.__cpu_usage_stats = []
         self.__memory_usage_stats = []
         self._poll_interval = poll_interval
+        self.__bind_with_cores = bind_with_cores
         self.__process = Process(self._log_settings,
                                  self._configurations_manager,
                                  action_process_name,
-                                 pid=self.process_id)
+                                 self.process_id,
+                                 self.__bind_with_cores)
         # flag to stop monitoring
         self.keep_monitoring = True
         self.__currently_running_threads = None
@@ -59,10 +61,9 @@ class ResourceUsageMonitor:
                             ('memory usage monitor', self.get_memory_stats)
                           ]
         self.__platform = Platform()
-        self.__bind_with_cores = bind_with_cores
 
     @property
-    def memory_usage_stats(self): return self.__memory_usage_stats
+    def memory_usage_stats(self): return self.__process.memory_usage_stats
 
     @property
     def process_id(self): return self.__process_id
@@ -71,7 +72,10 @@ class ResourceUsageMonitor:
     def execution_time(self): return self.__process.process_execution_time
 
     @property
-    def cpu_usage_stats(self): return self.__cpu_usage_stats
+    def per_cpu_usage_stats(self): return self.__process.per_cpu_usage_stats
+
+    @property
+    def all_cpus_usage_stats(self): return self.__process.all_cpus_usage_stats
 
     @property
     def keep_monitoring(self): return self.__keep_monitoring
@@ -86,14 +90,14 @@ class ResourceUsageMonitor:
 
     def __set_resource_usage_stats(self, process_exit_status):
         return {
-            'Process id': self.process_id,
-            'Process Name': self.process_name,
-            'Affinity mask': self.__bind_with_cores,
-            'Execution time [seconds]': self.execution_time,
+            'Process id': self.__process.process_id,
+            'Process Name': self.__process.process_name,
+            'Affinity mask': self.__process.process_affinity,
+            'Execution time [seconds]': self.__process.process_execution_time,
             'Process Exit status': process_exit_status,
             'Mean CPU usage [%] ': self.__process.mean_cpu_usage,
             'Mean memory usage [%] ': self.__process.mean_memory_usage,
-            'Time_stamp, CPU usage [% average] per second': self.__process.cpu_usage_stats,
+            'Time_stamp, Per CPU usage [% average] per second': self.__process.per_cpu_usage_stats,
             'Time_stamp, Memory usage [MiB] per second': self.__process.memory_usage_stats,
             'Underlying Platform Basic Details': self.__platform.basic_info,
             'CPU detailed information': self.__platform.detailed_CPUs_info
@@ -157,7 +161,7 @@ class ResourceUsageMonitor:
                 break
                 
             # Case b, the stats are read successfully
-            self.__process.cpu_usage_stats.append((timestamp_now, current_cpu_usage_stats))
+            self.__process.all_cpus_usage_stats.append((timestamp_now, current_cpu_usage_stats))
             time.sleep(self._poll_interval)
 
 

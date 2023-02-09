@@ -67,7 +67,7 @@ class CPUUsage:
     #     with open("/proc/cpuinfo", "r") as fp:
     #         for line in self.__generate_line_that_contains("cpu MHz", fp):
     #             # key, frequency =  map(str.strip, line.split(':'))
-    #             key,frequency = self.__split_values(line, ':')
+    #             key,frequency = self.__split_by_delimiter(line, ':')
     #             self._logger.error(f'CPUINFO: {key,frequency}')
     #             return frequency
 
@@ -77,15 +77,16 @@ class CPUUsage:
     #             yield line
 
     # TODO: move general purpose helper functions to util
-    def __split_values(self, line, delimiter):
+    def __split_by_delimiter(self, line, delimiter):
         return (map(str.strip, line.split(delimiter)))
 
     def __get_uptime(self):
         # NOTE: '/proc/uptime' contains the following two numbers:
-        # i. the uptime of the system (seconds), and
-        # ii. the amount of time spent in idle process (seconds) since then.
+        # i. the uptime (seconds) of the system, and
+        # ii. the amount of time (seconds) spent in idle process since then.
+        
         # split using white spaces as delimiers
-        system_uptime, system_idle_process_time = self.__split_values(
+        system_uptime, system_idle_process_time = self.__split_by_delimiter(
             self.__read(self.__path_to_system_uptime), None)
         self.__logger.debug(f"system uptime: {system_uptime}, "
                             f"system time spent on idle processes:"
@@ -126,15 +127,25 @@ class CPUUsage:
             return (timestamp_now, average_cpu_usage, process_execution_time)
 
     def __get_process_running_time(self, system_uptime, process_start_time):
-        # process-running-time(seconds) = system-uptime(seconds) - (starttime / USER_HZ) [1]
-        # [1]https://kb.novaordis.com/index.php/Linux_Per-Process_CPU_Runtime_Statistics#Overview
+        """
+            returns the process running time in secons using the following formula:
+           
+            process-running-time(seconds) = system-uptime(seconds) - (starttime / USER_HZ) [1]
+            
+            [1] https://kb.novaordis.com/index.php/Linux_Per-Process_CPU_Runtime_Statistics#Overview
+        """
         return (system_uptime - (process_start_time / self.__user_hz))
 
     def __get_current_cpu_usage(self, total_time_with_children, process_running_time):
-        # average_cpu-usage = (total-time-proc-plus-children / USER_HZ) / process-running-time * 100 [1,2]
-        # [1]https://kb.novaordis.com/index.php/Linux_Per-Process_CPU_Runtime_Statistics#Overview
-        # [2]https://stackoverflow.com/questions/16726779/how-do-i-get-the-total-cpu-usage-of-an-application-from-proc-pid-stat
-        return ((total_time_with_children / self.__user_hz) / process_running_time * 100)
+        """
+           returns the average CPU usage in percentage using the following formula:
+           
+           average_cpu-usage = (total-time-proc-plus-children / USER_HZ) / process-running-time * 100 [1,2]
+        
+        [1] https://kb.novaordis.com/index.php/Linux_Per-Process_CPU_Runtime_Statistics#Overview
+        [2] https://stackoverflow.com/questions/16726779/how-do-i-get-the-total-cpu-usage-of-an-application-from-proc-pid-stat
+        """
+        return (((total_time_with_children / self.__user_hz) / process_running_time) * 100)
 
     def __get_times(self):
         timestamp_now, total_time_with_children, process_start_time = self.__parse(

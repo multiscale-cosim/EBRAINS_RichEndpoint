@@ -20,8 +20,12 @@ import signal
 import fcntl
 import ast
 import zmq
+import pickle
+import base64
+import sys
 
-from common.utils import networking_utils
+from common.utils import networking_utils, multiprocess_utils
+from common.utils.security_utils import check_integrity
 
 from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.Application_Companion.resource_usage_monitor import ResourceUsageMonitor
@@ -40,11 +44,12 @@ from EBRAINS_RichEndpoint.orchestrator.zmq_sockets import ZMQSockets
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
+from EBRAINS_RichEndpoint.orchestrator import utils
 
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.default_directories_enum import DefaultDirectories
+from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
 
-
-class ApplicationManager(multiprocessing.Process):
+class ApplicationManager:
     """
     i).  Executes the action (application) as a child process,
     ii). Monitors its resource usage, and
@@ -60,12 +65,13 @@ class ApplicationManager(multiprocessing.Process):
                  # range of ports for Application Manager
                  port_range_for_application_manager,
                  # flag to enable/disable resource usage monitoring
-                 enable_resource_usage_monitoring=True):
-        multiprocessing.Process.__init__(self)
+                 enable_resource_usage_monitoring=True,
+                 is_execution_environment_hpc=False):
+        # multiprocessing.Process.__init__(self)
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
-            name=__name__,
+            name="Application_Manager",
             log_configurations=self._log_settings)
 
         # get client to Proxy Manager Server
@@ -86,8 +92,8 @@ class ApplicationManager(multiprocessing.Process):
         self.__health_registry_manager_proxy =\
             self._proxy_manager_client.get_registry_proxy()
 
-       
-       # range of ports for Application Manager
+        self.__is_execution_environment_hpc = is_execution_environment_hpc
+        # range of ports for Application Manager
         self.__port_range_for_application_manager = port_range_for_application_manager
         self.__application_manager_in_queue = None
         self.__application_manager_out_queue = None
@@ -136,7 +142,7 @@ class ApplicationManager(multiprocessing.Process):
         self.__action_process_name = None
         self.__am_registered_component_service = None
 
-        self.__logger.debug("Application Manager is initialized.")
+        self.__logger.debug("Application Manager is initialized")
 
     def __set_affinity(self, pid):
         """
@@ -154,10 +160,10 @@ class ApplicationManager(multiprocessing.Process):
         """
         # NOTE: core 1 is bound to the application manager itself,
         # rest are bound to the main application.
-       # bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
-        #                             self.__legitimate_cpu_cores))
-        bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
-                                     8))
+        bind_with_cores = list(range(self.__bind_to_cpu[0] + 1,
+                                     self.__legitimate_cpu_cores))
+        # bind_with_cores = list(range(self.__bind_to_cpu[0]+1,
+        #                              8))
         return self.__affinity_manager.set_affinity(pid, bind_with_cores)
 
     def __launch_application(self, application):
@@ -206,19 +212,21 @@ class ApplicationManager(multiprocessing.Process):
         # NOTE disabling the functionality for hpc becuase it is set directly
         # in 'srun' command given to subprocess.Popen
 
-        # if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
-        #     # affinity could not be set, log exception with traceback
-        #     # NOTE: application is launched with no defined affinity mask
-        #     try:
-        #         # raise runtime exception
-        #         raise (RuntimeError)
-        #     except RuntimeError:
-        #         # log the exception with traceback details
-        #         self.__logger.exception(
-        #             self.__logger,
-        #             f'affinity could not be set for '
-        #             f'<{self.__actions_id}>:'
-        #             f'{self.__popen_process.pid}')
+        if not is_execution_environment_hpc:
+            self.__logger.info(f'setting affinity for {self.__popen_process.pid}')
+            if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
+                # affinity could not be set, log exception with traceback
+                # NOTE: application is launched with no defined affinity mask
+                try:
+                    # raise runtime exception
+                    raise (RuntimeError)
+                except RuntimeError:
+                    # log the exception with traceback details
+                    self.__logger.exception(
+                        self.__logger,
+                        f'affinity could not be set for '
+                        f'<{self.__actions_id}>:'
+                        f'{self.__popen_process.pid}')
 
         # Otherwise, everything goes right
         self.__logger.info(f'<{self.__actions_id}> starts execution')
@@ -496,7 +504,7 @@ class ApplicationManager(multiprocessing.Process):
                     break
 
                 # Otherwise, wait a bit to let the process proceed the execution
-                time.sleep(1)
+                time.sleep(0.1)
                 # continue reading
                 continue
 
@@ -582,19 +590,46 @@ class ApplicationManager(multiprocessing.Process):
         self.__logger.info('post processing is done.')
         return Response.OK
 
-    def __send_command_to_application(self, command):
+    def __format_control_command(self, control_command_dictionary):
+        """
+        helper function to format the control command dictionary as a string
+        to send to the action
+        """
+        # NOTE Application Manager sends the control command with parameters in
+        # the following specific format as a string via stdio:
+        # {'STEERING_COMMAND': {'<Enum SteeringCommands>': <Enum value>}, 'PARAMETERS': <value>}
+        
+        # For example:
+        # {'STEERING_COMMAND': {'SteeringCommands.START': 2}, 'PARAMETERS': 1.2}
+
+        # convert the control_command dictionary to string
+        command = str(control_command_dictionary)
+        # Format to rectify the formatting of nested dictionary 
+        command = command.replace('<', '{')
+        command = command.replace('>', '}')
+        command = command.replace("SteeringCommands.START", "\'SteeringCommands.START\'")
+        self.__logger.debug(f'formatted the command: {command}')
+        return command
+    
+    def __send_command_to_application(self, control_command):
         """
         helper function to send Steering Commands to application.
 
         Parameters
         ----------
 
-        command : SteeringCommand
-            steering command to be sent to the application
+        control_command: ControlCommand
+            object of Control Command having the current steering command
+            and the parameters
         """
-        self.__logger.debug(f'sending command: {command} to application...')
+        self.__logger.debug(f'control_command: {control_command.command}')
+        # convert the control_command dictionary to string
+        command = self.__format_control_command(control_command.command)
+        self.__logger.debug(f'sending the control command: {command}')
+        # send the control command with parameters via stdio
         self.__popen_process.stdin.write(f'{command}\n'.encode())
         self.__popen_process.stdin.flush()
+        self.__logger.debug(f'sent the control command: {command}')
 
     def __send_response_to_application_companion(self, response):
         """
@@ -616,7 +651,7 @@ class ApplicationManager(multiprocessing.Process):
         return self.__communicator.send(
             response, self.__rep_endpoint_with_application_companion)
 
-    def __execute_init_command(self, action):
+    def __execute_init_command(self, control_command):
         """
         Executes INIT steering command by launching the application.
 
@@ -624,6 +659,7 @@ class ApplicationManager(multiprocessing.Process):
         local minimum delay, etc.) is a system action and is done implicitly
         after launching.
         """
+        steering_command, action = control_command.parse()
         # get actions to be executed
         self.__actions = action
         self.__logger.debug(f"actions: {self.__actions}")
@@ -682,15 +718,18 @@ class ApplicationManager(multiprocessing.Process):
             self.__response_from_action)
         return Response.OK
 
-    def __execute_start_command(self, global_minimum_step_size):
+    def __execute_start_command(self, control_command):
         """
         1. Executes START steering command by sending it to applications.
         2. Receives output from the application.
         3. Does post-processing after the execution of applications.
         """
+        steering_command, _ = control_command.parse()
         # 1. update local state
+        # self.__am_registered_component_service =\
+            # self.__update_local_state(SteeringCommands.START)
         self.__am_registered_component_service =\
-            self.__update_local_state(SteeringCommands.START)
+            self.__update_local_state(steering_command)
         if self.__am_registered_component_service == Response.ERROR:
             # terminate loudly as state could not be updated
             # exception is already logged with traceback
@@ -706,7 +745,7 @@ class ApplicationManager(multiprocessing.Process):
                     return Response.ERROR
 
         # 3. send command to application
-        self.__send_command_to_application(SteeringCommands.START.name)
+        self.__send_command_to_application(control_command)
 
         # 4. Read outputs from the application
         if self.__read_popen_pipes(self.__application) == Response.ERROR:
@@ -734,15 +773,18 @@ class ApplicationManager(multiprocessing.Process):
         self.__send_response_to_application_companion(Response.OK)
         return Response.OK
 
-    def __execute_end_command(self, parameters):
+    def __execute_end_command(self, control_command):
         """
         Checks the exit status of the application.
 
         NOTE later add other functionality here such as post data analysis etc.
         """
+        steering_command, _ = control_command.parse()
         # 1. update local state
+        # self.__am_registered_component_service =\
+            # self.__update_local_state(SteeringCommands.END)
         self.__am_registered_component_service =\
-            self.__update_local_state(SteeringCommands.END)
+            self.__update_local_state(steering_command)
         if self.__am_registered_component_service == Response.ERROR:
             # terminate loudly as state could not be updated
             # exception is already logged with traceback
@@ -808,21 +850,6 @@ class ApplicationManager(multiprocessing.Process):
             # terminate with ERROR
             return Response.ERROR
     
-    def __parse_command(self):
-        """
-        helper function to parse commands received from Applicaiton Companion
-        """
-        command = self.__communicator.receive(
-                self.__rep_endpoint_with_application_companion)
-        self.__logger.debug(f"command received: {command}")
-        try:
-            current_steering_command = command.get(COMMANDS.STEERING_COMMAND.name)
-            parameters = command.get(COMMANDS.PARAMETERS.name)
-        except ValueError:
-            self.__terminate_with_error_loudly("error in parsing command")
-        
-        return current_steering_command, parameters
-    
     def __fetch_and_execute_steering_commands(self):
         """
         Main loop to fetch and execute the steering commands.
@@ -840,12 +867,15 @@ class ApplicationManager(multiprocessing.Process):
 
         # loop for executing and fetching the steering commands
         while True:
-            # 1. fetch the Steering Command
-            current_steering_command, parameters = self.__parse_command()
-            self.__logger.debug(f"got the command: {current_steering_command}")
-            self.__logger.debug(f"got the parameters: {parameters}")
+            # 1. recieve the command
+            command = self.__communicator.receive(
+                self.__rep_endpoint_with_application_companion)
+            # parse the command to get the ControlCommand object and the
+            # current steering command
+            control_command, current_steering_command, _ = utils.parse_command(
+                self.__logger, command)
             # 2. execute the current steering command
-            if command_execution_choices[current_steering_command](parameters) ==\
+            if command_execution_choices[current_steering_command](control_command) ==\
                     Response.ERROR:
                 # something went wrong, terminate with error
                 # NOTE a relevant exception is already logged with traceback
@@ -960,7 +990,7 @@ class ApplicationManager(multiprocessing.Process):
         action_simulators_names = {"action_004": "NEST_SIMULATOR",
                                    "action_010":"TVB_SIMULATOR",
                                    "action_006": "InterscaleHub_NEST_TO_TVB",
-                                   "action_008":"InterscaleHub_TVB_TO_NEST"}
+                                   "action_008": "InterscaleHub_TVB_TO_NEST"}
         self.__action_process_name = action_simulators_names[self.__actions_id]
 
         # 3. setup endpoints for communication
@@ -1008,6 +1038,9 @@ class ApplicationManager(multiprocessing.Process):
         # flag to indicate if something goes wrong
         # do post-processing such as set up its own affinity, get application
         # to be executed etc.
+        self.__logger.info("running at hostname: "
+                           f"{networking_utils.my_host_name()}, "
+                           f"ip: {networking_utils.my_ip()}")
         if self.__pre_processing() == Response.ERROR:
             # Case a. something went wrong. Send ERROR as response to
             # Application Companion and terminate execution
@@ -1016,3 +1049,59 @@ class ApplicationManager(multiprocessing.Process):
 
         # 2. start fetching steering commands and execute them accordingly
         return self.__fetch_and_execute_steering_commands()
+
+
+if __name__ == '__main__':
+    if len(sys.argv)==8:
+        # TODO better handling of arguments parsing        
+
+        # 1. unpickle objects
+        # unpickle log_settings
+        log_settings = pickle.loads(base64.b64decode(sys.argv[1]))
+        # unpickle configurations_manager object
+        configurations_manager = pickle.loads(base64.b64decode(sys.argv[2]))
+        # get actions (applications) to be launched
+        action = pickle.loads(base64.b64decode(sys.argv[3]))
+        # unpickle connection details of Registry Proxy Manager object
+        proxy_manager_connection_details = pickle.loads(base64.b64decode(sys.argv[4]))
+        # unpickle range of ports for Application Manager
+        port_range_for_application_manager = pickle.loads(base64.b64decode(sys.argv[5]))
+        # flag to enable/disable resource usage monitoring
+        enable_resource_usage_monitoring = pickle.loads(base64.b64decode(sys.argv[6]))
+        # unpickle the flag indicating if target platform for deployment is HPC
+        is_execution_environment_hpc = pickle.loads(base64.b64decode(sys.argv[7]))
+        
+        # 2. security check of pickled objects
+        # it raises an exception, if the integrity is compromised
+        try:
+            check_integrity(configurations_manager, ConfigurationsManager)
+            check_integrity(log_settings, dict)
+            check_integrity(action, dict)
+            check_integrity(proxy_manager_connection_details, dict)
+            check_integrity(port_range_for_application_manager, dict)
+            check_integrity(enable_resource_usage_monitoring, bool)
+            check_integrity(is_execution_environment_hpc, bool)
+        except Exception as e:
+            # NOTE an exception is already raised with context when checking the 
+            # integrity
+            print(f'pickled object is not an instance of expected type!. {e}')
+            sys.exit(1)
+
+        # 3. all is well, instantiate Application Manager
+        application_manager = ApplicationManager(
+            log_settings,
+            configurations_manager,
+            action,
+            proxy_manager_connection_details,
+            port_range_for_application_manager,
+            enable_resource_usage_monitoring,
+            is_execution_environment_hpc
+        )    
+        # 4. start executing Application Manager
+        print("launching Applicaiton Manager")
+        application_manager.run()
+        sys.exit(0)
+    else:
+        print(f'missing argument[s]; required: 8, received: {len(sys.argv)}')
+        print(f'Argument list received: {str(sys.argv)}')
+        sys.exit(1)

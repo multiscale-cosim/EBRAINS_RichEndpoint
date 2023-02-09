@@ -27,22 +27,22 @@ class ResourceUsageSummary:
     @property
     def cpu_usage_stats(self): return self.__cpu_usage_stats
 
-    @property
-    def mean_cpu_usage(self): 
-        """returns the mean value of total cpu usage"""
+    # @property
+    def mean_cpu_usage(self, per_cpu_avg_usage): 
+        """returns the mean value of the total cpu usage"""
         # comput the mean from list of tuples: [(timnestamp, cpu_usage_stats)]
         return [sum(sub_list) / len(sub_list)
-                for sub_list in [list(zip(*self.__cpu_usage_stats))[1]]]
+                for sub_list in [list(zip(*per_cpu_avg_usage))[1]]]
 
     @property
     def mean_memory_usage(self):
-        """returns the mean value of total memory usage"""
-        # compute the mean from list of tuples: [(timnestamp, memory_usage_stats)]
+        """returns the mean value of the total memory usage"""
+        # extract the memory usage stats from list of tuples: [(timnestamp, memory_usage_stats)]
         memory_usage = list(map(lambda x: x[1], self.__memory_usage_stats))
         counter = collections.Counter() 
         frequency = 0
-        for k in memory_usage:
-            counter.update(k)
+        for usage_stat in memory_usage:
+            counter.update(usage_stat)
             frequency += 1
         result = dict (counter)
         avg = lambda sum_value, frequency: sum_value/frequency
