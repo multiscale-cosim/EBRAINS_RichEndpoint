@@ -11,7 +11,7 @@
 #       Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from datetime import datetime
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 from EBRAINS_RichEndpoint.registry_state_machine.health_status import HealthStatus
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 

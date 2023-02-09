@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------------
 from multiprocessing.managers import BaseManager
 
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 
 
 class ProxyManagerClient:

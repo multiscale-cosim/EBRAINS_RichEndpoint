@@ -14,8 +14,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_CATEGORY
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SERVICE_COMPONENT_STATUS
+from EBRAINS_RichEndpoint.application_companion.common_enums import SERVICE_COMPONENT_CATEGORY
+from EBRAINS_RichEndpoint.application_companion.common_enums import SERVICE_COMPONENT_STATUS
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
 
 

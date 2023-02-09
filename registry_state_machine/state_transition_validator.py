@@ -12,7 +12,7 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from EBRAINS_RichEndpoint.registry_state_machine.state_enums import STATES
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import SteeringCommands
+from EBRAINS_RichEndpoint.application_companion.common_enums import SteeringCommands
 
 
 class StateTransitionValidator:

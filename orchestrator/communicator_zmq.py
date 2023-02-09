@@ -14,9 +14,9 @@
 import signal
 import pickle
 
-from EBRAINS_RichEndpoint.Application_Companion.signal_manager import SignalManager
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import EVENT
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.application_companion.signal_manager import SignalManager
+from EBRAINS_RichEndpoint.application_companion.common_enums import EVENT
+from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 from EBRAINS_RichEndpoint.orchestrator.communicator_base import CommunicatorBaseClass
 
 

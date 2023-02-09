@@ -18,7 +18,7 @@ import threading
 from multiprocessing.managers import BaseManager
 
 from EBRAINS_RichEndpoint.registry_state_machine.health_registry_manager import HealthRegistryManager
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 
 
 # crete a custom (server process) manager for managing the shared data using

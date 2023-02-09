@@ -12,7 +12,7 @@
 # Team: Multi-scale Simulation and Design
 # ------------------------------------------------------------------------------
 from EBRAINS_RichEndpoint.steering.steering_menu_cli import SteeringMenuCLI
-from EBRAINS_RichEndpoint.Application_Companion.common_enums import Response
+from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 
 
 class SteeringMenuCLIHandler:
