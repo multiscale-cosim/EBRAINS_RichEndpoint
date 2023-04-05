@@ -100,6 +100,8 @@ class ApplicationManager:
         self.__rep_endpoint_with_application_companion = None
         self.__actions = actions
         self.__actions_id = None
+        self.__actions_goal = None
+        self.__actions_label = None
         self.__application = None
         # set up signal handling for such as CTRL+C
         self.__signal_manager = SignalManager(
@@ -200,12 +202,12 @@ class ApplicationManager:
         # or ValueError
         except Exception:
             # log the exception with traceback
-            self.__logger.exception(f'Could not run <{self.__actions_id}>.')
+            self.__logger.exception(f'Could not run <{self.__actions_label}>.')
             # return with error to terminate loudly
             return Response.ERROR
 
         # Case b, application is launched.
-        self.__logger.debug(f'<{self.__actions_id}> is launched.')
+        self.__logger.debug(f'<{self.__actions_label}> is launched.')
 
         # 2. set the affinity for the application
 
@@ -225,13 +227,13 @@ class ApplicationManager:
                     self.__logger.exception(
                         self.__logger,
                         f'affinity could not be set for '
-                        f'<{self.__actions_id}>:'
+                        f'<{self.__actions_label}>:'
                         f'{self.__popen_process.pid}')
 
         # Otherwise, everything goes right
-        self.__logger.info(f'<{self.__actions_id}> starts execution')
+        self.__logger.info(f'<{self.__actions_label}> starts execution')
         self.__logger.debug(f"PID:{os.getpid()} is executing the action "
-                            f"<{self.__actions_id}>, "
+                            f"<{self.__actions_label}>, "
                             f"PID={self.__popen_process.pid}")
         return Response.OK
 
@@ -254,7 +256,7 @@ class ApplicationManager:
         # Case a, monitoring could not be started
         if resource_usage_monitor.start_monitoring() == Response.ERROR:
             return self.__terminate_with_error_loudly(
-                    f'Could not start monitoring for <{self.__actions_id}>: '
+                    f'Could not start monitoring for <{self.__actions_label}>: '
                     f'{pid}')
 
         # Case b: monitoring starts
@@ -362,7 +364,7 @@ class ApplicationManager:
                 # therefore starts at index-2
                 interscalehub_endpoint = ast.literal_eval(
                     lines[starts_at - 2:ending_at[running_index]+1])
-                self.__logger.debug(f"running dictionary: {interscalehub_endpoint}")
+                self.__logger.info(f"running dictionary: {interscalehub_endpoint}")
                 self.__response_from_action.append(interscalehub_endpoint)
                 self.__action_pids.append(interscalehub_endpoint.get("PID"))
             self.__logger.info(f"got responses: {self.__response_from_action}")
@@ -409,7 +411,7 @@ class ApplicationManager:
         try:
             # the index points to PID, the curly bracket {'PID'... therefore
             # starts at from index-2
-            self.__logger.debug("string response before converting to a"
+            self.__logger.info("string response before converting to a"
                                 f"dictionary: {lines[index - 2:]}")
             self.__response_from_action = ast.literal_eval(lines[index - 2:])
             self.__action_pids.append(self.__response_from_action.get("PID"))
@@ -448,7 +450,7 @@ class ApplicationManager:
                 if stdout_line:
                     decoded_lines = stdout_line.strip().decode('utf-8')
                     self.__logger.info(
-                        f"action <{self.__actions_id}>: "
+                        f"action <{self.__actions_label}>: "
                         f"{decoded_lines}")
 
                     # get local minimum step size received from the Simulator
@@ -512,7 +514,7 @@ class ApplicationManager:
             except KeyboardInterrupt:
                 # log the exception with traceback
                 self.__logger.exception(f"KeyboardInterrupt caught by: "
-                                        f"action <{self.__actions_id}>")
+                                        f"action <{self.__actions_label}>")
                 # terminate the application process peremptory
                 if self.__stop_preemptory() == Response.ERROR:
                     # Case, process could not be terminated
@@ -558,6 +560,7 @@ class ApplicationManager:
 
             # path to JSON file for dumping the monitoring data
             metrics_file = os.path.join(metrics_output_directory,
+                                        f'{self.__actions_label}_'
                                         f'pid_{monitored_process_pid}'
                                         '_resource_usage_metrics.json')
             # dump the monitoring data
@@ -713,7 +716,7 @@ class ApplicationManager:
         # 4. send local minimum step size as a response to Application
         # Companion
         self.__logger.debug('outputs are read from '
-                            f'{self.__actions_id}: {self.__response_from_action}')
+                            f'{self.__actions_label}: {self.__response_from_action}')
         self.__send_response_to_application_companion(
             self.__response_from_action)
         return Response.OK
@@ -799,12 +802,12 @@ class ApplicationManager:
             # terminate with error
             return self.__terminate_with_error_loudly(
                 f"application <{self.__application}> "
-                f" action: <{self.__actions_id}> execution "
+                f" action: <{self.__actions_label}> execution "
                 f"went wrong, finished with rc = {self.__exit_status}"
             )
 
         # Case b, application executed successfully
-        self.__logger.info(f'Action <{self.__actions_id}> finished properly.')
+        self.__logger.info(f'Action <{self.__actions_label}> finished properly.')
         self.__send_response_to_application_companion(Response.OK)
         return Response.OK
 
@@ -978,20 +981,23 @@ class ApplicationManager:
         # fetch the action id
         try:
             self.__actions_id = self.__actions.get('action-id')
+            self.__actions_label = self.__actions.get('action-label')
+            self.__actions_goal = self.__actions.get('action-goal')
         except KeyError:
-            # 'action-id' could not be found in 'actions' dictionary
+            # could not found the key in 'actions' dictionary
             # log the exception with traceback
-            self.__logger.exception("'action-id' is not a valid key.")
+            self.__logger.exception("not a valid key!")
             return Response.ERROR
 
         # otherwise, action-id is found
         self.__logger.debug(f'action_id:{self.__actions_id}')
         # TODO isntead get the name from Launcher (XML)
-        action_simulators_names = {"action_004": "NEST_SIMULATOR",
-                                   "action_010":"TVB_SIMULATOR",
-                                   "action_006": "InterscaleHub_NEST_TO_TVB",
-                                   "action_008": "InterscaleHub_TVB_TO_NEST"}
-        self.__action_process_name = action_simulators_names[self.__actions_id]
+        # action_simulators_names = {"action_004": "NEST_SIMULATOR",
+        #                            "action_010": "TVB_SIMULATOR",
+        #                            "action_006": "InterscaleHub_NEST_TO_TVB",
+        #                            "action_008": "InterscaleHub_TVB_TO_NEST"}
+        # self.__action_process_name = action_simulators_names[self.__actions_id]
+        self.__action_process_name = self.__actions_label
 
         # 3. setup endpoints for communication
         self.__setup_endpoints()
@@ -999,7 +1005,7 @@ class ApplicationManager:
         # 4. register with Registry
         # prepare name for proxy
         # TODO set proxy_name to action_type
-        proxy_name = self.__actions_id+"_"+"Application_Manager"
+        proxy_name = self.__action_process_name+"_"+"Application_Manager"
         self.__logger.debug(f"proxy_name: {proxy_name}")
         # register the proxy
         if (

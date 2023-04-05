@@ -33,6 +33,8 @@ from EBRAINS_RichEndpoint.application_companion.common_enums import SERVICE_COMP
 import EBRAINS_RichEndpoint.steering.steering_service as SteeringService
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 
+from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers import constants
+
 
 class LauncherHPC:
     '''
@@ -482,12 +484,37 @@ class LauncherHPC:
         """helper function to stop Proxy Manager Server"""
         self._proxy_manager_client.stop_server()
 
+    def __interscaelHub_num_processes(self, actions):
+        self.__logger.debug(f"Number of Actions to be launched{len(actions)}")
+        total_interscaleHub_num_processes = 0
+        for action in actions:
+            self.__logger.debug(f"action: {action}, action-goal: {action.get('action-goal')}")
+            if action.get('action-goal') == constants.CO_SIM_INTERSCALE_HUB or\
+               action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
+                action_command = action.get('action')
+                for index, ntasks in enumerate(action_command):
+                    if ntasks == '-n' or ntasks == '--ntasks=':
+                        total_interscaleHub_num_processes = action_command[index+1]
+
+        self.__logger.info(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
+        return int(total_interscaleHub_num_processes)
+    
+    def __terminate_after_cc_service_went_wrong(self):
+        '''helper funciton to terminate loudly when something wrong'''
+        # shutdown proxy manager server
+        self.__stop_proxy_manager_server()
+        # terminate Command&Control service
+        self.__terminate_launched_component(cc_service)
+        # log exception with traceback and terminate with error
+        self.__log_exception_and_terminate_with_error(
+            f'{cc_service} is broken!')
+   
     def launch(self, actions):
         '''
             launches all the necessary MS components such as Command & Control
             Service, Application Companions, Orchestrator, Steering Service.
         '''
-
+        self.__logger.debug(f"actions to be launched: {actions}")
         # 1. setup runtime settings
         self.__setup_runtime()
 
@@ -512,13 +539,8 @@ class LauncherHPC:
         # Case a, something went wrong with service launching
         if self.__checkpoint_service_status(
                 SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) == Response.ERROR:
-            # shutdown proxy manager server
-            self.__stop_proxy_manager_server()
-            # terminate Command&Control service
-            self.__terminate_launched_component(cc_service)
-            # log exception with traceback and terminate with error
-            self.__log_exception_and_terminate_with_error(
-                f'{cc_service} is broken!')
+            # shut down Proxy Manager Server and terminate loudly
+            self.__terminate_after_cc_service_went_wrong()
 
         # Case b, all is fine continue with launching
         self.__logger.info('Checkpoint: Command & Control service is '
@@ -528,6 +550,20 @@ class LauncherHPC:
         # ii. Launch Application Companions #
         #####################################
         application_companions = []
+        # number of Application Companions to be launched
+        serialized_total_num_application_companion = multiprocess_utils.b64encode_and_pickle(
+            self.__logger, len(actions))
+        # number of InterscaleHub processes to be launched
+        total_interscaleHub_num_processes = self.__interscaelHub_num_processes(actions)
+        if total_interscaleHub_num_processes < 1:
+            # shut down Proxy Manager Server and terminate loudly
+            self.__terminate_after_cc_service_went_wrong()
+        
+        # serialize number of interscaleHub processes
+        serialized_total_interscaleHub_num_processes = multiprocess_utils.b64encode_and_pickle(
+            self.__logger, total_interscaleHub_num_processes)
+        
+        # launch Application Companions
         for action in actions:
             # serialize the action
             self.__serialized_action = multiprocess_utils.b64encode_and_pickle(
@@ -541,7 +577,9 @@ class LauncherHPC:
                 self.__serialized_proxy_manager_connection_details,
                 self.__serialized_port_range_for_application_companions,
                 self.__serialized_port_range_for_application_manager,
-                self.__serialized_is_execution_environment_hpc
+                self.__serialized_is_execution_environment_hpc,
+                serialized_total_num_application_companion,
+                serialized_total_interscaleHub_num_processes
             )
             self.__logger.info('setting up Application Companion.')
             application_companions.append(subprocess.Popen(

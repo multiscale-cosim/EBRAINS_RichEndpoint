@@ -46,6 +46,7 @@ from EBRAINS_RichEndpoint.orchestrator import utils
 
 from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
+from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers import constants
 
 
 class ApplicationCompanion:
@@ -58,7 +59,9 @@ class ApplicationCompanion:
                  proxy_manager_connection_details,
                  port_range=None,
                  port_range_for_application_manager=None,
-                 is_execution_environment_hpc=False):
+                 is_execution_environment_hpc=False,
+                 total_application_managers=0,
+                 total_interscaleHub_num_processes=0):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -93,6 +96,8 @@ class ApplicationCompanion:
         self.__port_range = port_range
         self.__port_range_for_application_manager = port_range_for_application_manager
         self.__is_execution_environment_hpc = is_execution_environment_hpc
+        self.__total_application_managers = total_application_managers
+        self.__total_interscaleHub_num_processes = total_interscaleHub_num_processes
         # restrict Application Companion to a single core (i.e core 1) only
         # so not to interrupt the execution of the main application
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
@@ -103,6 +108,8 @@ class ApplicationCompanion:
         self.__ac_registered_component_service = None
         self.__application_manager = None
         self.__action_id = None
+        self.__action_goal = None
+        self.__action_label = None
         self.__action_pids = []
         self.__logger.debug("Application Companion is initialized")
 
@@ -143,9 +150,10 @@ class ApplicationCompanion:
         """creates communication endpoints"""
         # 1. fetch proxy to Application Manager from registry
         # TODO set as per number of Application Manager defined in XML settings
-        total_application_managers = 4
+        # total_application_managers = 4
+        # total_application_managers = 2
         application_manager_proxy_list = []
-        while len(application_manager_proxy_list) < total_application_managers:
+        while len(application_manager_proxy_list) < self.__total_application_managers:
             # wait until it gets Application Manager proxy from Registry
             # TODO handle deadlock here
             self.__logger.debug("looking for Application Manager Proxy in Registry. "
@@ -163,8 +171,8 @@ class ApplicationCompanion:
         # get proxy to Application Manager belong to current action
         for proxy in application_manager_proxy_list:
             self.__logger.debug(f'running proxy: {proxy}, '
-                                f'action id: {self.__action_id}')
-            if self.__action_id in proxy.name:
+                                f'action label: {self.__action_label}')
+            if self.__action_label in proxy.name:
                 self.__application_manager_proxy_list.append(proxy)
                 self.__logger.debug('found Application Manager Proxy: '
                     f'{self.__application_manager_proxy_list}')
@@ -372,7 +380,7 @@ class ApplicationCompanion:
                 self.__logger.exception("Affinity could not be set.")
         
         # 2. fetch the action id
-        if self.__get_action_id() == Response.ERROR:
+        if self.__get_action_ids() == Response.ERROR:
             # NOTE a relevant exception is already logged with traceback
             # return with error to terminate loudly
             return Response.ERROR
@@ -585,10 +593,7 @@ class ApplicationCompanion:
         Registry Service
         """
         interscalehub_proxy_list = []
-        # TODO replace with number of interscalehubs mpi processes as defined
-        # in XML settings
-        total_interscaleHubs = 4
-        while len(interscalehub_proxy_list) < total_interscaleHubs:
+        while len(interscalehub_proxy_list) < self.__total_interscaleHub_num_processes:
             # wait until it gets InterscaleHub proxy from Registry
             # TODO handle deadlock here
             self.__logger.debug("waiting for InterscaleHub connection details. "
@@ -618,11 +623,28 @@ class ApplicationCompanion:
 
     def __get_endpoints(self, simulator):
         """returns MPI endpoints of InterscaleHubs according to Simulator"""
-        intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
+        # intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
         interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_TVB.name,
-                          DATA_EXCHANGE_DIRECTION.TVB_TO_NEST.name]
-        if simulator == "TVB":  # TODO replace it with action type from XML
-            intercomms.reverse()
+                          DATA_EXCHANGE_DIRECTION.TVB_TO_NEST.name,
+                          DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name
+                          ]
+        # Case a: One-way data exchange
+        if self.__action_goal == constants.CO_SIM_ONE_WAY_SIMULATION:
+            # TODO refactor to make it generic
+            interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name]
+            intercomms = [INTERCOMM_TYPE.RECEIVER.name]
+            self.__logger.debug(f"interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
+        
+        # Case b: Two-way data exchange
+        elif self.__action_goal == constants.CO_SIM_SIMULATION:
+            interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_TVB.name,
+                             DATA_EXCHANGE_DIRECTION.TVB_TO_NEST.name
+                             ]
+            intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
+            if "TVB" in simulator:
+                intercomms.reverse()
+            self.__logger.debug(f"interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
+
         # get proxies to interscalehubs
         interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
         # get list of interscalehub endpoints        
@@ -632,23 +654,40 @@ class ApplicationCompanion:
 
         # get endpoints list as per simulator
         endpoints = []
-        for index, intercomm in enumerate(intercomms):
-            endpoint = self.__get_endpoints_as_per_simulator(
+        if len(interscaleHubs) == 1:
+            for intercomm in intercomms:
+                self.__logger.debug(f"interscaleHubs: {interscaleHubs}, intercomm: {intercomm} ")
+                endpoint = self.__get_endpoints_as_per_simulator(
                 interscalehub_endpoints_list,
-                interscaleHubs[index],
+                interscaleHubs[0],
                 intercomm)
-            # terminate with error if endpoint could not be found
-            if endpoint is None:
-                self.__logger.critical("could not found endpoints, "
-                                       f"simulator: {simulator}, "
-                                       f"InterscaleHub:{interscaleHubs[index]}"
-                                       f", intercomm: {intercomm}")
-                self.__terminate_with_error()
 
-            # else, append endpoint to list
-            endpoints.append(endpoint)
-            # remove the found one endpoint to reduce the search space
-            # interscalehub_endpoints_list.remove(endpoint)
+                # terminate with error if endpoint could not be found
+                if endpoint is None:
+                    self.__logger.critical("could not found endpoints, "
+                                        f"simulator: {simulator}, "
+                                        f"InterscaleHub:{interscaleHubs[index]}"
+                                        f", intercomm: {intercomm}")
+                    self.__terminate_with_error()
+                endpoints.append(endpoint)
+        else:
+            for index, intercomm in enumerate(intercomms):
+                endpoint = self.__get_endpoints_as_per_simulator(
+                    interscalehub_endpoints_list,
+                    interscaleHubs[index],
+                    intercomm)
+                # terminate with error if endpoint could not be found
+                if endpoint is None:
+                    self.__logger.critical("could not found endpoints, "
+                                        f"simulator: {simulator}, "
+                                        f"InterscaleHub:{interscaleHubs[index]}"
+                                        f", intercomm: {intercomm}")
+                    self.__terminate_with_error()
+
+                # else, append endpoint to list
+                endpoints.append(endpoint)
+                # remove the found one endpoint to reduce the search space
+                # interscalehub_endpoints_list.remove(endpoint)
 
         self.__logger.info(f"simulator: {simulator}, InterscaleHub endpoints: {endpoints}")
         return endpoints
@@ -683,17 +722,22 @@ class ApplicationCompanion:
         # All InterscaleHub endpoints are registered successfully
         return Response.OK
 
-    def __get_action_id(self):
-        '''helper function to retrieve action id from actions'''
+    def __get_action_ids(self):
+        '''
+            helper function to retrieve action specific idetntifiers from
+            dictionary 'actions'
+        '''
         try:
             self.__action_id = self.__actions['action-id']
+            self.__action_goal = self.__actions['action-goal']
+            self.__action_label = self.__actions['action-label']
         except KeyError:
-            # 'action-id' could not be found in 'actions' dictionary
+            # specified key could not be found in 'actions' dictionary
             # log the exception with traceback
-            self.__logger.exception("'action-id' is not a valid key.")
+            self.__logger.exception("not a valid key!")
             return Response.ERROR
 
-        # action id is retrieved
+        # action ids are retrieved
         return Response.OK
     
     def __execute_init_command(self, control_command):
@@ -728,14 +772,15 @@ class ApplicationCompanion:
         # the InterscaleHub registers its connections details
         # Case a: action type is SIMULATOR
         # fetch and append InterscaleHub MPI endpoint connection details
-        if self.__action_id == 'action_004' or self.__action_id == 'action_010':  # TODO will be updated with the actions_type from XML
-            action_simulators_names = {'action_004': "NEST", 'action_010':"TVB"}
+        # if self.__action_id == 'action_004' or self.__action_id == 'action_010':  # TODO will be updated with the actions_type from XML
+        if self.__action_goal == constants.CO_SIM_SIMULATION or self.__action_goal == constants.CO_SIM_ONE_WAY_SIMULATION:
+            # action_simulators_names = {'action_004': "NEST", 'action_010':"TVB"}
+            action_with_parameters = self.__actions['action']
+            self.__logger.debug(f"action_with_parameters: {action_with_parameters}")
             # get mpi endpoint connection details
-            interscalehub_mpi_endpoints =\
-                self.__get_endpoints(action_simulators_names.get(self.__action_id))
+            interscalehub_mpi_endpoints = self.__get_endpoints(self.__action_label)
             # append interscale_hub mpi endpoint connection details with
             # actions as parameters
-            action_with_parameters = self.__actions['action']
             action_with_parameters.append(
                 multiprocess_utils.b64encode_and_pickle(self.__logger, interscalehub_mpi_endpoints))
             self.__actions['action'] = action_with_parameters
@@ -757,7 +802,8 @@ class ApplicationCompanion:
 
         # 6. if action type is INTERSCALEHUB then register the connection
         # details with registry
-        if self.__action_id == 'action_006' or self.__action_id == 'action_008':  # TODO will be updated with the actions_type from XML
+        # if self.__action_id == 'action_006' or self.__action_id == 'action_008':  # TODO will be updated with the actions_type from XML
+        if self.__action_goal == constants.CO_SIM_INTERSCALE_HUB or self.__action_goal == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
             # register endpoints with registry service
             if self.__register_interscalehubs_endpoints(response) == Response.ERROR:
                 # Case a: InterscaleHubs endpoints could not be registered
@@ -926,7 +972,7 @@ class ApplicationCompanion:
         return self.__fetch_and_execute_steering_commands()
 
 if __name__ == '__main__':
-    if len(sys.argv)==8:
+    if len(sys.argv)==10:
         # TODO better handling of arguments parsing
         
         # 1. unpickle objects
@@ -944,6 +990,10 @@ if __name__ == '__main__':
         port_range_for_application_manager = pickle.loads(base64.b64decode(sys.argv[6]))
         # unpickle the flag indicating if target platform for deployment is HPC
         is_execution_environment_hpc = pickle.loads(base64.b64decode(sys.argv[7]))
+        # unpickle the number of Application Manager launched
+        total_application_managers = pickle.loads(base64.b64decode(sys.argv[8]))
+        # unpickle the number of Application InterscaleHubs launched
+        total_interscaleHub_num_processes = pickle.loads(base64.b64decode(sys.argv[9]))
         
         # 2. security check of pickled objects
         # it raises an exception, if the integrity is compromised
@@ -955,6 +1005,8 @@ if __name__ == '__main__':
             check_integrity(port_range_for_application_companions, dict)
             check_integrity(port_range_for_application_manager, dict)
             check_integrity(is_execution_environment_hpc, bool)
+            check_integrity(total_application_managers, int)
+            check_integrity(total_interscaleHub_num_processes, int)
         except Exception as e:
             # NOTE an exception is already raised with context when checking
             # the integrity
@@ -969,13 +1021,15 @@ if __name__ == '__main__':
                                         proxy_manager_connection_details,
                                         port_range_for_application_companions,
                                         port_range_for_application_manager,
-                                        is_execution_environment_hpc)
+                                        is_execution_environment_hpc,
+                                        total_application_managers,
+                                        total_interscaleHub_num_processes)
         # 4. start executing Application Companion
         print("launching Application Companion")
         application_companion.run()
         sys.exit(0)
     else:
-        print(f'missing argument[s]; required: 8, received: {len(sys.argv)}')
+        print(f'missing argument[s]; required: 10, received: {len(sys.argv)}')
         print(f'Argument list received: {str(sys.argv)}')
         sys.exit(1)
     

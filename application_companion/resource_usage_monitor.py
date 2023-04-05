@@ -32,7 +32,7 @@ class ResourceUsageMonitor:
                  configurations_manager,
                  pid, bind_with_cores,
                  action_process_name,
-                 poll_interval=1.0,  # default is 1 second
+                 poll_interval=1.0,  # default is 1 second,
                  ):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
