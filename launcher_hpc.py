@@ -495,7 +495,6 @@ class LauncherHPC:
                 for index, ntasks in enumerate(action_command):
                     try:
                         if ntasks == '-n':
-                            # total_interscaleHub_num_processes += int(action_command[index+1])
                             total_interscaleHub_num_processes += int(action_command[index+1])
                         elif '--ntasks=' in ntasks:
                             total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
