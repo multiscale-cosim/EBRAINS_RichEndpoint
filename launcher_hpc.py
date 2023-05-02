@@ -493,13 +493,22 @@ class LauncherHPC:
                action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
                 action_command = action.get('action')
                 for index, ntasks in enumerate(action_command):
-                    if ntasks == '-n' or ntasks == '--ntasks=':
-                        total_interscaleHub_num_processes = action_command[index+1]
+                    try:
+                        if ntasks == '-n':
+                            # total_interscaleHub_num_processes += int(action_command[index+1])
+                            total_interscaleHub_num_processes += int(action_command[index+1])
+                        elif '--ntasks=' in ntasks:
+                            total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
+                    except TypeError:
+                        # list item is of type bytes 
+                        self.__logger.debug(f"list item type:{type(ntasks)}")
+                        # continue traversing
+                        continue
 
         self.__logger.info(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         return int(total_interscaleHub_num_processes)
     
-    def __terminate_after_cc_service_went_wrong(self):
+    def __terminate_after_cc_service_went_wrong(self, cc_service):
         '''helper funciton to terminate loudly when something wrong'''
         # shutdown proxy manager server
         self.__stop_proxy_manager_server()
@@ -540,7 +549,7 @@ class LauncherHPC:
         if self.__checkpoint_service_status(
                 SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) == Response.ERROR:
             # shut down Proxy Manager Server and terminate loudly
-            self.__terminate_after_cc_service_went_wrong()
+            return self.__terminate_after_cc_service_went_wrong(cc_service)
 
         # Case b, all is fine continue with launching
         self.__logger.info('Checkpoint: Command & Control service is '
@@ -555,9 +564,10 @@ class LauncherHPC:
             self.__logger, len(actions))
         # number of InterscaleHub processes to be launched
         total_interscaleHub_num_processes = self.__interscaelHub_num_processes(actions)
+        self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         if total_interscaleHub_num_processes < 1:
             # shut down Proxy Manager Server and terminate loudly
-            self.__terminate_after_cc_service_went_wrong()
+            return self.__terminate_after_cc_service_went_wrong(cc_service)
         
         # serialize number of interscaleHub processes
         serialized_total_interscaleHub_num_processes = multiprocess_utils.b64encode_and_pickle(
@@ -606,7 +616,7 @@ class LauncherHPC:
 
             # log exception with traceback and terminate with error
             if is_broken_service:
-                self.__log_exception_and_terminate_with_error(
+                return self.__log_exception_and_terminate_with_error(
                     f'{application_companion} is broken!')
 
         # Case b, all is fine continue with launching
@@ -640,7 +650,7 @@ class LauncherHPC:
             for application_companion in application_companions:
                 self.__terminate_launched_component(application_companion)
             # log exception with traceback and terminate with error
-            self.__log_exception_and_terminate_with_error(
+            return self.__log_exception_and_terminate_with_error(
                 f'{orchestrator} is broken!')
 
         # Case b, all is fine continue with launching
@@ -679,7 +689,7 @@ class LauncherHPC:
             # terminate Orchestrator
             self.__terminate_launched_component(orchestrator)
             # log exception with traceback and terminate with error
-            self.__log_exception_and_terminate_with_error(
+            return self.__log_exception_and_terminate_with_error(
                 f'{steering_service} is broken!')
 
         # Case b, all is fine continue with launching

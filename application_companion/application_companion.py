@@ -616,6 +616,7 @@ class ApplicationCompanion:
         for endpoint in endpoints:
             if endpoint[INTERSCALE_HUB.DATA_EXCHANGE_DIRECTION.name] == direction and\
                     endpoint[INTERSCALE_HUB.INTERCOMM_TYPE.name] == intercomm_type:
+                self.__logger.debug(f"endpoint:{endpoint}")
                 return endpoint
 
         # return None if no matching endpoint is found
@@ -629,8 +630,8 @@ class ApplicationCompanion:
                           DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name
                           ]
         # Case a: One-way data exchange
+        # TODO refactor to make it generic, change with maybe specific usecase type
         if self.__action_goal == constants.CO_SIM_ONE_WAY_SIMULATION:
-            # TODO refactor to make it generic
             interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name]
             intercomms = [INTERCOMM_TYPE.RECEIVER.name]
             self.__logger.debug(f"interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
@@ -643,7 +644,7 @@ class ApplicationCompanion:
             intercomms = [INTERCOMM_TYPE.RECEIVER.name, INTERCOMM_TYPE.SENDER.name]
             if "TVB" in simulator:
                 intercomms.reverse()
-            self.__logger.debug(f"interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
+            self.__logger.debug(f"simulator: {simulator}, interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
 
         # get proxies to interscalehubs
         interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
@@ -651,7 +652,7 @@ class ApplicationCompanion:
         interscalehub_endpoints_list = [interscalehub_proxy.endpoint
                                         for interscalehub_proxy in
                                         interscalehub_proxy_list]
-
+        self.__logger.debug(f"interscalehub_endpoints_list: {interscalehub_endpoints_list} ")
         # get endpoints list as per simulator
         endpoints = []
         if len(interscaleHubs) == 1:
