@@ -45,7 +45,9 @@ class LauncherHPC:
                  proxy_manager_server_address=None,
                  communication_settings_dict=None,
                  services_deployment_dict=None,
-                 is_execution_environment_hpc=False):
+                 is_execution_environment_hpc=False,
+                 is_interactive=False,
+                 is_monitoring_enabled=False):
 
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -71,7 +73,10 @@ class LauncherHPC:
         self.__latency = None  # TODO must be determine runtime
         # flag to determine the target platform for execution
         self.__is_execution_environment_hpc = is_execution_environment_hpc
-
+        # flag whether the steering is interactive
+        self.__is_interactive =  is_interactive
+        # flag to determine whether resource usage monitroing is enabled
+        self.__is_monitoring_enabled = is_monitoring_enabled
         # set port range for components
         if self.__communication_settings_dict is not None:
             # initialize with values parsed from XML configuration file
@@ -108,8 +113,9 @@ class LauncherHPC:
         self.__serialized_port_range_for_orchestrator = None
         # Flag to indicate if communication is vua 0MQs
         self.__serialized_is_communicate_via_zmqs = None
-        # Flag to indicate if steering is interactive
+
         self.__serialized_is_interactive = None
+        self.__serialized_is_monitoring_enabled = None
 
         # initialize deployment settings for components
         if self.__is_execution_environment_hpc:
@@ -457,7 +463,11 @@ class LauncherHPC:
 
         # Boolean to indicate if steering is interactive
         self.__serialized_is_interactive = multiprocess_utils.b64encode_and_pickle(
-            self.__logger, False)
+            self.__logger, self.__is_interactive)
+        
+        # Boolean to indicate if steering is interactive
+        self.__serialized_is_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(
+            self.__logger, self.__is_monitoring_enabled)
 
         # Boolean to indicate if target platform for deployment is HPC
         self.__serialized_is_execution_environment_hpc = multiprocess_utils.b64encode_and_pickle(
@@ -588,7 +598,8 @@ class LauncherHPC:
                 self.__serialized_port_range_for_application_manager,
                 self.__serialized_is_execution_environment_hpc,
                 serialized_total_num_application_companion,
-                serialized_total_interscaleHub_num_processes
+                serialized_total_interscaleHub_num_processes,
+                self.__serialized_is_monitoring_enabled
             )
             self.__logger.info('setting up Application Companion.')
             application_companions.append(subprocess.Popen(
@@ -701,7 +712,7 @@ class LauncherHPC:
     # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
 
         # wait until all processes are finished
-        
+
         # Application Companion
         for application_companion in application_companions:
             application_companion.wait()

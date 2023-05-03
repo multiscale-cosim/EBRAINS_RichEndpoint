@@ -275,6 +275,8 @@ class SteeringService:
         self.__current_legitimate_choice = 1  # currently: 1 = INIT
         # Step 2a. interactive mode with steering menu
         if self._is_interactive:
+            # NOTE WARNING did not test on supercomputers, may be broken
+            # TODO test it on supercomputers
             user_choice = 0
             while True:
                 # increment the index of currently valid menu choice

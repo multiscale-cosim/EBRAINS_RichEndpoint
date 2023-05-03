@@ -61,7 +61,8 @@ class ApplicationCompanion:
                  port_range_for_application_manager=None,
                  is_execution_environment_hpc=False,
                  total_application_managers=0,
-                 total_interscaleHub_num_processes=0):
+                 total_interscaleHub_num_processes=0,
+                 is_monitoring_enabled=False):
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
         self.__logger = self._configurations_manager.load_log_configurations(
@@ -98,6 +99,7 @@ class ApplicationCompanion:
         self.__is_execution_environment_hpc = is_execution_environment_hpc
         self.__total_application_managers = total_application_managers
         self.__total_interscaleHub_num_processes = total_interscaleHub_num_processes
+        self.__is_monitoring_enabled = is_monitoring_enabled
         # restrict Application Companion to a single core (i.e core 1) only
         # so not to interrupt the execution of the main application
         self.__bind_to_cpu = [0]  # TODO: configure it from configurations file
@@ -309,7 +311,7 @@ class ApplicationCompanion:
         port_range_for_application_manager = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__port_range_for_application_manager)
         # NOTE by dfault the resource usage monitoring is enabled
         # TODO configure it via XML
-        is_resource_usage_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(self.__logger, True)
+        is_resource_usage_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_monitoring_enabled)
         is_execution_environment_hpc = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_execution_environment_hpc)
 
         # NOTE Application Manager should be deployed on the nodes
@@ -340,7 +342,7 @@ class ApplicationCompanion:
             # TODO set monitoring enable/disable settings from XML
             is_resource_usage_monitoring_enabled,
             # flag to indicate if the target environment is HPC
-            is_execution_environment_hpc]
+            is_execution_environment_hpc,]
 
         # 4. prepare srun command
         command_to_run_application_manager = deployment_settings_hpc.deployment_command(
@@ -973,7 +975,7 @@ class ApplicationCompanion:
         return self.__fetch_and_execute_steering_commands()
 
 if __name__ == '__main__':
-    if len(sys.argv)==10:
+    if len(sys.argv)==11:
         # TODO better handling of arguments parsing
         
         # 1. unpickle objects
@@ -995,6 +997,8 @@ if __name__ == '__main__':
         total_application_managers = pickle.loads(base64.b64decode(sys.argv[8]))
         # unpickle the number of Application InterscaleHubs launched
         total_interscaleHub_num_processes = pickle.loads(base64.b64decode(sys.argv[9]))
+        # unpickle the flag indicating if resource usage monitoring is enabled
+        is_monitoring_enabled = pickle.loads(base64.b64decode(sys.argv[10]))
         
         # 2. security check of pickled objects
         # it raises an exception, if the integrity is compromised
@@ -1008,6 +1012,7 @@ if __name__ == '__main__':
             check_integrity(is_execution_environment_hpc, bool)
             check_integrity(total_application_managers, int)
             check_integrity(total_interscaleHub_num_processes, int)
+            check_integrity(is_monitoring_enabled, bool)
         except Exception as e:
             # NOTE an exception is already raised with context when checking
             # the integrity
@@ -1024,13 +1029,14 @@ if __name__ == '__main__':
                                         port_range_for_application_manager,
                                         is_execution_environment_hpc,
                                         total_application_managers,
-                                        total_interscaleHub_num_processes)
+                                        total_interscaleHub_num_processes,
+                                        is_monitoring_enabled)
         # 4. start executing Application Companion
         print("launching Application Companion")
         application_companion.run()
         sys.exit(0)
     else:
-        print(f'missing argument[s]; required: 10, received: {len(sys.argv)}')
+        print(f'missing argument[s]; required: 11, received: {len(sys.argv)}')
         print(f'Argument list received: {str(sys.argv)}')
         sys.exit(1)
     
