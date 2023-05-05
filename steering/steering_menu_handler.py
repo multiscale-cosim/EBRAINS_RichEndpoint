@@ -42,7 +42,7 @@ class SteeringMenuCLIHandler:
         print('\n')
 
     def get_user_choice(self):
-        choice = input("please enter the choice number [1-3]: \n")
+        choice = input("please enter the choice number [1-3]: ")
         self.__current_choice = self.__convert_str_to_int(choice)
         return self.current_selection
 
