@@ -118,7 +118,8 @@ class ApplicationManager:
         self.__stop_event = self.__signal_manager.shut_down_event
         # event to record that SIGTERM signal is captured
         self.__kill_event = self.__signal_manager.kill_event
-        self.__is_monitoring_enabled = enable_resource_usage_monitoring
+        # self.__is_monitoring_enabled = enable_resource_usage_monitoring
+        self.__is_monitoring_enabled = False  # NOTE monitoring is done from adapters
         # if monitoring is enabled, then initialize monitoring data handler
         if self.__is_monitoring_enabled:
             # NOTE monitoring data is dumped in to JSON files

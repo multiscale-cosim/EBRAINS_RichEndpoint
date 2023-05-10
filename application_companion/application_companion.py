@@ -314,6 +314,8 @@ class ApplicationCompanion:
         is_resource_usage_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_monitoring_enabled)
         is_execution_environment_hpc = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_execution_environment_hpc)
 
+        # append whether resource usage monitoring is enabled
+        self.__actions['action'].append(is_resource_usage_monitoring_enabled)
         # NOTE Application Manager should be deployed on the nodes
         # where the action is going to be executed
         # 2. get target nodelist of action for deploying the Application Manager
@@ -431,7 +433,8 @@ class ApplicationCompanion:
         if (
             self.__health_registry_manager_proxy.register(
                 os.getpid(),  # id
-                self.__actions["action"],  # name
+                # self.__actions["action"],  # name
+                self.__action_label,  # name
                 SERVICE_COMPONENT_CATEGORY.APPLICATION_COMPANION,  # category
                 self.__endpoints_address,  # endpoint
                 SERVICE_COMPONENT_STATUS.UP,  # current status
@@ -786,6 +789,7 @@ class ApplicationCompanion:
             # actions as parameters
             action_with_parameters.append(
                 multiprocess_utils.b64encode_and_pickle(self.__logger, interscalehub_mpi_endpoints))
+            
             self.__actions['action'] = action_with_parameters
 
         # 4. send INIT command to Application Manager
