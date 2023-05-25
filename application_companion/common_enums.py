@@ -73,6 +73,7 @@ class INTEGRATED_SIMULATOR_APPLICATION(enum.IntEnum):
     """ Enum class for integrated applications (simulators)"""
     PID = 0
     LOCAL_MINIMUM_STEP_SIZE = 1
+    SPIKE_DETECTORS = 2
 
 
 @enum.unique

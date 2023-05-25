@@ -990,14 +990,12 @@ class ApplicationManager:
             self.__logger.exception("not a valid key!")
             return Response.ERROR
 
-        # otherwise, action-id is found
+        # otherwise, action idnetfiers are found
         self.__logger.debug(f'action_id:{self.__actions_id}')
-        # TODO isntead get the name from Launcher (XML)
-        # action_simulators_names = {"action_004": "NEST_SIMULATOR",
-        #                            "action_010": "TVB_SIMULATOR",
-        #                            "action_006": "InterscaleHub_NEST_TO_TVB",
-        #                            "action_008": "InterscaleHub_TVB_TO_NEST"}
-        # self.__action_process_name = action_simulators_names[self.__actions_id]
+        self.__logger.debug(f'action_label:{self.__actions_label}')
+        self.__logger.debug(f'action_goal:{self.__actions_goal}')
+        
+        # set process name
         self.__action_process_name = self.__actions_label
 
         # 3. setup endpoints for communication

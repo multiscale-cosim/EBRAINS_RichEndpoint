@@ -85,6 +85,7 @@ class Orchestrator:
 
         self.__step_sizes = None
         self.__global_min_step_size = None
+        self.__spike_detectors = None
         self.__steering_commands_history = []
         self.__responses_received = []
         self.__command_and_control_service = []
@@ -152,6 +153,50 @@ class Orchestrator:
                                     self.__orchestrator_registered_component,
                                     input_command)
 
+    def __remove_empty_responses(self, responses_from_actions):
+        # remove empty responses e.g. '{}' i.e. responses without step_sizes from InterscaleHubs
+        responses = []
+        for response in responses_from_actions:
+            self.__logger.debug(f"running dictionary of response: {response}")
+            if response == {}:
+                continue
+            else:
+                # append running dictionary containing pid and stepsize to list
+                responses.append(response)
+
+        self.__logger.debug(f"after removing empty responses: {responses}")
+        return responses
+
+    def __spike_detectors_ids(self, responses_from_actions):
+        """
+        helper function for finding the id of first spike detectors
+
+         Parameters
+        ----------
+        step_sizes_with_pids : list
+            list of dictionaries containing the PIDs and step sizes.
+
+        Returns
+        ------
+        minimum step size: float
+            the minimum step size of the list.
+        """
+        spike_detectors = None
+        # extract spike detectors from responses
+        for response in responses_from_actions:
+            spike_detectors = response.get('SPIKE_DETECTORS')
+            if spike_detectors:
+                self.__logger.debug(f'spike_detectors: {spike_detectors}')
+                # return spike detectots
+                return spike_detectors
+
+        if not spike_detectors:
+            # the response does not contain spike detectors
+            # log the warning to notify
+            self.__logger.critical("could not find spike_detectors in: "
+                                    f"{responses_from_actions}")
+            return spike_detectors
+
     def __find_global_minimum_step_size(self, responses_from_actions):
         """
         helper function for finding the minimum step size.
@@ -166,33 +211,21 @@ class Orchestrator:
         minimum step size: float
             the minimum step size of the list.
         """
-        # list of response dictionaries
-        step_sizes_with_pids = []
-        # remove responses without step_sizes (e.g. from InterscaleHubs)
-        for response in responses_from_actions:
-            self.__logger.debug(f"running dictionary of response: {response}")
-            if response == {}:
-                continue
-            else:
-                # append running dictionary containing pid and stepsize to list
-                step_sizes_with_pids.append(response)
-
-        self.__logger.debug(f"step_sizes_with_pids: {step_sizes_with_pids}")
-
         # find minimum step size in the list of responses
         try:
             # extract all step sizes from the list
-            step_sizes = [
+            self.__step_sizes = [
                 sub[INTEGRATED_SIMULATOR_APPLICATION.LOCAL_MINIMUM_STEP_SIZE.name]
-                for sub in step_sizes_with_pids]
-            self.__logger.debug(f'step_sizes: {step_sizes}')
+                for sub in responses_from_actions]
+            
+            self.__logger.debug(f'received step_sizes: {self.__step_sizes}')
             # return minimum step size in the list
-            return min(step_sizes)
+            return min(self.__step_sizes)
         except KeyError:
             # the response does not contain step_size
             # log exception with traceback
             self.__logger.exception("could not find step-size in: "
-                                    f"{step_sizes_with_pids}")
+                                    f"{responses_from_actions}")
             return Response.ERROR
 
     def __receive_responses(self):
@@ -246,12 +279,13 @@ class Orchestrator:
             # terminate processing with error
             return Response.ERROR
 
+        # remove empty responses
+        valid_responses = self.__remove_empty_responses(responses)
+        self.__logger.debug(f'valid_responses: {valid_responses}')
         # Case, find the minimum step-size if steering command is INIT
         if steering_command == SteeringCommands.INIT:
-            self.__step_sizes = responses
-            self.__logger.debug(f'step_sizes and PIDs: {self.__step_sizes}')
             self.__global_min_step_size = self.__find_global_minimum_step_size(
-                self.__step_sizes)
+                valid_responses)
             # check if global minimum step size could not be determined
             if self.__global_min_step_size == Response.ERROR:
                 # terminate with Error
@@ -261,10 +295,22 @@ class Orchestrator:
             # successfully
             self.__logger.info('Global Minimum Step Size: '
                                f'{self.__global_min_step_size}')
-            return Response.OK
 
-        # Case, response is e.g. RESPONSE.OK, etc.
-        # keep track of responses received
+            # NEST shares spike detectors ids for some usecases in reponse
+            # to INIT command by protocol
+            # get the ids from response
+            self.__spike_detectors = self.__spike_detectors_ids(valid_responses)
+            if not self.__spike_detectors:
+                # NOTE for some usecases its not required to expose spike detctors
+                # Best to log it and move forward
+                self.__logger.debug("spike detectors ids are not shared")
+            else:
+                # Otherwise, spike detectors ids are extracted successfully
+                self.__logger.info(f'Spike Detectors ids: {self.__spike_detectors}')
+
+        # keep track of received responses
+        # NOTE By protocol, response is not minimum step_size if the steering
+        # command is not INIT, instead it could be e.g. RESPONSE.OK, etc.
         self.__responses_received.append(responses)
         return Response.OK
 
@@ -331,7 +377,7 @@ class Orchestrator:
         parameters = None
         # send global minimum step size with Steering command 'START'
         if steering_command == SteeringCommands.START:
-            parameters = self.global_minimum_step_size
+            parameters = (self.__global_min_step_size, self.__spike_detectors)
         # prepare the control command
         self.__control_command.prepare(steering_command, parameters)
         self.__logger.debug("prepared the command: "
