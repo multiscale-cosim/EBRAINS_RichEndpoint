@@ -24,8 +24,8 @@ import pickle
 import base64
 import sys
 
-from common.utils import networking_utils, multiprocess_utils
-from common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import networking_utils, multiprocess_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
 
 from EBRAINS_RichEndpoint.application_companion.signal_manager import SignalManager
 from EBRAINS_RichEndpoint.application_companion.resource_usage_monitor import ResourceUsageMonitor

@@ -22,10 +22,10 @@ import zmq
 import inspect
 import subprocess
 
-from common.utils import networking_utils
-from common.utils.security_utils import check_integrity
-from common.utils import deployment_settings_hpc
-from common.utils import multiprocess_utils
+from EBRAINS_Launcher.common.utils import networking_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import deployment_settings_hpc
+from EBRAINS_Launcher.common.utils import multiprocess_utils
 
 from EBRAINS_RichEndpoint.application_companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.application_companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC

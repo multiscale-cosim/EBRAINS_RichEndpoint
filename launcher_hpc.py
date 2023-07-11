@@ -16,10 +16,10 @@ import base64
 import subprocess
 import inspect
 
-from common.utils import proxy_manager_server_utils
-from common.utils import networking_utils
-from common.utils import deployment_settings_hpc
-from common.utils import multiprocess_utils
+from EBRAINS_Launcher.common.utils import proxy_manager_server_utils
+from EBRAINS_Launcher.common.utils import networking_utils
+from EBRAINS_Launcher.common.utils import deployment_settings_hpc
+from EBRAINS_Launcher.common.utils import multiprocess_utils
 
 from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers.xml_tags \
     import CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SRUN_OPTIONS, \
