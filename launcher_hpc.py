@@ -20,6 +20,8 @@ from EBRAINS_Launcher.common.utils import proxy_manager_server_utils
 from EBRAINS_Launcher.common.utils import networking_utils
 from EBRAINS_Launcher.common.utils import deployment_settings_hpc
 from EBRAINS_Launcher.common.utils import multiprocess_utils
+# from EBRAINS_Launcher.servers.app_server import app as APP_SERVER
+import EBRAINS_Launcher.servers.app_server as APP_SERVER
 
 from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers.xml_tags \
     import CO_SIM_XML_CO_SIM_SERVICES_DEPLOYMENT_SRUN_OPTIONS, \
@@ -47,7 +49,8 @@ class LauncherHPC:
                  services_deployment_dict=None,
                  is_execution_environment_hpc=False,
                  is_interactive=False,
-                 is_monitoring_enabled=False):
+                 is_monitoring_enabled=False,
+                 is_enabled_app_server_running=True):
 
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -73,6 +76,9 @@ class LauncherHPC:
         self.__latency = None  # TODO must be determine runtime
         # flag to determine the target platform for execution
         self.__is_execution_environment_hpc = is_execution_environment_hpc
+        # flag whether the app server is should be launched
+        self.__is_enabled_app_server_running = is_enabled_app_server_running
+        self.__app_server = None
         # flag whether the steering is interactive
         self.__is_interactive =  is_interactive
         # flag to determine whether resource usage monitroing is enabled
@@ -259,7 +265,7 @@ class LauncherHPC:
         self.__logger.debug(f"command with arguments:{srun_command_with_args}")
         return srun_command_with_args
 
-    def __read_popen_pipes(self, process):
+    def __read_popen_pipes(self, process, ):
         """
         helper function to read the outputs from the process.
 
@@ -298,6 +304,11 @@ class LauncherHPC:
                         self.__logger.info(f"{decoded_lines}")
                         break
 
+                    if "start simulation!" in decoded_lines:
+                        # server is started, start launching components
+                        self.__logger.info(f"{decoded_lines}")
+                        break
+
                 # read from the process error stream
                 stderr_line = multiprocess_utils.non_block_read(
                         self.__logger,
@@ -332,7 +343,7 @@ class LauncherHPC:
 
         # all went well, the expected outputs are read
         return Response.OK
-
+    
     def __setup_runtime(self):
         """
             Sets up essential settings for launching the components.
@@ -517,16 +528,48 @@ class LauncherHPC:
         self.__logger.info(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         return int(total_interscaleHub_num_processes)
     
-    def __terminate_after_cc_service_went_wrong(self, cc_service):
+    def __terminate_after_service_went_wrong(self, service):
         '''helper funciton to terminate loudly when something wrong'''
         # shutdown proxy manager server
         self.__stop_proxy_manager_server()
         # terminate Command&Control service
-        self.__terminate_launched_component(cc_service)
+        self.__terminate_launched_component(service)
         # log exception with traceback and terminate with error
         self.__log_exception_and_terminate_with_error(
-            f'{cc_service} is broken!')
+            f'{service} is broken!')
    
+    def __setup_app_server(self):
+        my_ip = networking_utils.my_ip()
+
+        # APP_SERVER.run(port=52428)
+        # app_Server_path = inspect.getfile(APP_SERVER)
+        # command_to_run_app_server = f"gunicorn {app_Server_path}:app --bind {my_ip}:52428"
+        port = "52428"
+        host = networking_utils.my_ip()
+        command_to_run_app_server = self.__deployment_command(
+                APP_SERVER,
+                SERVICE_COMPONENT_CATEGORY.APP_SERVER.name,
+                host,
+                port)
+
+        self.__app_server = subprocess.Popen(
+            command_to_run_app_server,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False)
+
+        # wait until app server receives the script and saves it to
+        # userland/models directory
+        if self.__read_popen_pipes(self.__app_server) == Response.ERROR:
+            # Case a, server could not be started
+            # log the exception with traceback and terminate with error
+            return self.__log_exception_and_terminate_with_error(
+                                "Could not read output!")
+        # Case b, server is started
+        self.__logger.info("App Server is started!")
+        return Response.OK
+
     def launch(self, actions):
         '''
             launches all the necessary MS components such as Command & Control
@@ -537,7 +580,22 @@ class LauncherHPC:
         self.__setup_runtime()
 
         # 2. Launch Modular Science Services
-        
+        #####################################
+        # i. Launch App Server #
+        #####################################
+        if self.__is_enabled_app_server_running:
+            if self.__setup_app_server() == Response.ERROR:
+                #  Case a, something went wrong with service launching
+                # shut down Proxy Manager Server and terminate loudly
+                return self.__terminate_after_service_went_wrong(self.__app_server)
+
+        # Case b, all is fine continue with launching
+        self.__logger.info('Checkpoint: Command & Control service is '
+                           'deployed successfully and status is ready!')
+    # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
+
+            
+
         #####################################
         # i. Launch Command&Control service #
         #####################################
@@ -558,7 +616,7 @@ class LauncherHPC:
         if self.__checkpoint_service_status(
                 SERVICE_COMPONENT_CATEGORY.COMMAND_AND_CONTROL) == Response.ERROR:
             # shut down Proxy Manager Server and terminate loudly
-            return self.__terminate_after_cc_service_went_wrong(cc_service)
+            return self.__terminate_after_service_went_wrong(cc_service)
 
         # Case b, all is fine continue with launching
         self.__logger.info('Checkpoint: Command & Control service is '
@@ -576,7 +634,7 @@ class LauncherHPC:
         self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         if total_interscaleHub_num_processes < 1:
             # shut down Proxy Manager Server and terminate loudly
-            return self.__terminate_after_cc_service_went_wrong(cc_service)
+            return self.__terminate_after_service_went_wrong(cc_service)
         
         # serialize number of interscaleHub processes
         serialized_total_interscaleHub_num_processes = multiprocess_utils.b64encode_and_pickle(
