@@ -304,7 +304,7 @@ class LauncherHPC:
                         self.__logger.info(f"{decoded_lines}")
                         break
 
-                    if "start simulation!" in decoded_lines:
+                    if "POST /submit HTTP/1.1" in decoded_lines:
                         # server is started, start launching components
                         self.__logger.info(f"{decoded_lines}")
                         break
@@ -318,6 +318,19 @@ class LauncherHPC:
                     self.__logger.error(
                         f"{process}: "
                         f"{stderr_line.strip().decode('utf-8')}")
+
+                    decoded_lines = stderr_line.strip().decode('utf-8')
+                    self.__logger.debug(
+                        f"process <{process}>, output: {decoded_lines}")
+
+                    # stop reading if Proxy Manager Server is started
+                    # NOTE by protocol, Proxy Manager Server prints following
+                    # statement when started:
+                    # "starting Proxy Manager Server at..."
+                    if "POST /submit HTTP/1.1" in decoded_lines:
+                        # server is started, start launching components
+                        self.__logger.info(f"{decoded_lines}")
+                        break
 
                 # Otherwise, wait a bit to let the process proceed the execution
                 time.sleep(0.1)
@@ -546,6 +559,7 @@ class LauncherHPC:
         # command_to_run_app_server = f"gunicorn {app_Server_path}:app --bind {my_ip}:52428"
         port = "52428"
         host = networking_utils.my_ip()
+        print(f"my_ip: {host}")
         command_to_run_app_server = self.__deployment_command(
                 APP_SERVER,
                 SERVICE_COMPONENT_CATEGORY.APP_SERVER.name,
