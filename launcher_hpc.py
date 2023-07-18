@@ -531,20 +531,29 @@ class LauncherHPC:
             self.__logger.debug(f"action: {action}, action-goal: {action.get('action-goal')}")
             if action.get('action-goal') == constants.CO_SIM_INTERSCALE_HUB or\
                action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
-                action_command = action.get('action')
-                for index, ntasks in enumerate(action_command):
-                    try:
-                        if ntasks == '-n':
-                            total_interscaleHub_num_processes += int(action_command[index+1])
-                        elif '--ntasks=' in ntasks:
-                            total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
-                    except TypeError:
-                        # list item is of type bytes 
-                        self.__logger.debug(f"list item type:{type(ntasks)}")
-                        # continue traversing
-                        continue
+                 total_interscaleHub_num_processes += 2
 
-        self.__logger.info(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
+                 # NOTE Application Companion waits until it receives the endpoints from all
+                 # InterscaleHubs (see applicaiton_companion.py line 602).
+                 # Think about cases: where the same port is used for sending
+                 # and receiving e.g. in case of ARBOR
+
+
+                 # action_command = action.get('action')
+                 # for index, ntasks in enumerate(action_command):
+                 #     try:
+                 #         if ntasks == '-n':
+                 #             total_interscaleHub_num_processes += int(action_command[index+1])
+                 #         elif '--ntasks=' in ntasks:
+                 #             total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
+                 #     except TypeError:
+                 #         # list item is of type bytes
+                 #         self.__logger.debug(f"list item type:{type(ntasks)}")
+                 #         # continue traversing
+                 continue
+
+        self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
+
         return int(total_interscaleHub_num_processes)
     
     def __terminate_after_service_went_wrong(self, service):
@@ -610,7 +619,7 @@ class LauncherHPC:
             # wait until app server receives the script and saves it to
             # userland/models directory
             if self.__read_popen_pipes(process=self.__app_server,
-                                       signal_to_continue_cosim="POST /submit HTTP/1.1") == Response.ERROR:
+                                       signal_to_continue_cosim="POST /submit") == Response.ERROR:
                 # Case a, an error occured when reading from the pipes
                 # log the exception with traceback and terminate with error
                 self.__terminate_after_service_went_wrong(self.__app_server)
