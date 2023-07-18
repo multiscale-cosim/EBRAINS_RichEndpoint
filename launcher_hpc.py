@@ -500,21 +500,29 @@ class LauncherHPC:
         for action in actions:
             self.__logger.debug(f"action: {action}, action-goal: {action.get('action-goal')}")
             if action.get('action-goal') == constants.CO_SIM_INTERSCALE_HUB or\
-               action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
-                action_command = action.get('action')
-                for index, ntasks in enumerate(action_command):
-                    try:
-                        if ntasks == '-n':
-                            total_interscaleHub_num_processes += int(action_command[index+1])
-                        elif '--ntasks=' in ntasks:
-                            total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
-                    except TypeError:
-                        # list item is of type bytes 
-                        self.__logger.debug(f"list item type:{type(ntasks)}")
-                        # continue traversing
-                        continue
+                action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
+                total_interscaleHub_num_processes += 2
 
-        self.__logger.info(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
+                # NOTE Application Companion waits until it receives the endpoints from all
+                # InterscaleHubs (see applicaiton_companion.py line 602).
+                # Think about cases: where the same port is used for sending
+                # and receiving e.g. in case of ARBOR
+
+
+                # action_command = action.get('action')
+                # for index, ntasks in enumerate(action_command):
+                #     try:
+                #         if ntasks == '-n':
+                #             total_interscaleHub_num_processes += int(action_command[index+1])
+                #         elif '--ntasks=' in ntasks:
+                #             total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
+                #     except TypeError:
+                #         # list item is of type bytes 
+                #         self.__logger.debug(f"list item type:{type(ntasks)}")
+                #         # continue traversing
+                continue
+
+        self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         return int(total_interscaleHub_num_processes)
     
     def __terminate_after_cc_service_went_wrong(self, cc_service):
