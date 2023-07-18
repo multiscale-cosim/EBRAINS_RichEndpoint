@@ -54,7 +54,7 @@ class HealthStatusMonitor:
         if self.__health_registry_manager_proxy.are_all_statuses_up(all_components):
             # Case a: All components are 'UP' and running
             # now, check if all components have same local states
-            return self.__health_registry_manager_proxy.are_all_have_same_state(components_with_states)
+            return self.__health_registry_manager_proxy.do_all_have_same_state(components_with_states)
         else:
             # Case b: some components are 'DOWN'
             components_with_status_down =\

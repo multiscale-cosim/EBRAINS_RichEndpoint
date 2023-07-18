@@ -81,7 +81,7 @@ class StateTransitionValidator:
             return STATES.ERROR
 
     def next_valid_global_state(self, all_components, components_with_states,
-                                are_all_statuses_up, are_all_have_same_state):
+                                are_all_statuses_up, do_all_have_same_state):
         """
         Checks whether the constraints are met for global state transition and
         returns the next valid global state as per transition rules.
@@ -135,7 +135,7 @@ class StateTransitionValidator:
 
         # 1.2) CONSTRAINT 2: if all local states are same
         # check with call_back function if all local states are same
-        if not are_all_have_same_state(components_with_states):
+        if not do_all_have_same_state(components_with_states):
             # Case 1: Constraint 2 is not satisfied - components have different states
             # log the exception with traceback
             self.__logger.error('components have different states.'

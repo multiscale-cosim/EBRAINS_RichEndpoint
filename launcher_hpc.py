@@ -80,7 +80,7 @@ class LauncherHPC:
         self.__is_enabled_app_server_running = is_enabled_app_server_running
         self.__app_server = None
         # flag whether the steering is interactive
-        self.__is_interactive =  is_interactive
+        self.__is_interactive = is_interactive
         # flag to determine whether resource usage monitroing is enabled
         self.__is_monitoring_enabled = is_monitoring_enabled
         # set port range for components
@@ -100,6 +100,7 @@ class LauncherHPC:
         self.__port_range_for_command_control = None
         self.__port_range_for_application_companions = None
         self.__port_range_for_application_manager = None
+        self.__port_range_for_app_server = None
         # initialize range of ports for each component
         self.__set_up_port_range_for_components()
 
@@ -119,7 +120,7 @@ class LauncherHPC:
         self.__serialized_port_range_for_orchestrator = None
         # Flag to indicate if communication is vua 0MQs
         self.__serialized_is_communicate_via_zmqs = None
-
+        self.__serialized_action = None
         self.__serialized_is_interactive = None
         self.__serialized_is_monitoring_enabled = None
 
@@ -178,12 +179,16 @@ class LauncherHPC:
             # Application Manager
             self.__port_range_for_application_manager =\
                 self.__ports_for_command_control_channel["APPLICATION_MANAGER"]
+            # App Server
+            self.__port_range_for_app_server =\
+                self.__ports_for_command_control_channel["APP_SERVER"]
+
         except KeyError:
             # log with traceback
-            self.logger.exception("error reading Keys from: "
+            self.__logger.exception("error reading Keys from: "
                                   f"{self.__ports_for_command_control_channel}")
-            # re-raise to exit
-            raise KeyError
+            # raise to exit
+            raise 
 
     def __set_up_proxy_manager_connection_details(
                                         self, proxy_manager_server_address):
@@ -265,7 +270,7 @@ class LauncherHPC:
         self.__logger.debug(f"command with arguments:{srun_command_with_args}")
         return srun_command_with_args
 
-    def __read_popen_pipes(self, process, ):
+    def __read_popen_pipes(self, process, signal_to_continue_cosim):
         """
         helper function to read the outputs from the process.
 
@@ -295,17 +300,17 @@ class LauncherHPC:
                     self.__logger.debug(
                         f"process <{process}>, output: {decoded_lines}")
 
-                    # stop reading if Proxy Manager Server is started
+                    # stop reading if the signal to continue the cosim is
+                    # received
+
                     # NOTE by protocol, Proxy Manager Server prints following
                     # statement when started:
                     # "starting Proxy Manager Server at..."
-                    if "starting Proxy Manager Server at" in decoded_lines:
-                        # server is started, start launching components
-                        self.__logger.info(f"{decoded_lines}")
-                        break
 
-                    if "POST /submit HTTP/1.1" in decoded_lines:
-                        # server is started, start launching components
+                    # NOTE App Server responded with "POST /submit HTTP/1.1"
+                    # when the script is submitted
+                    
+                    if signal_to_continue_cosim in decoded_lines:
                         self.__logger.info(f"{decoded_lines}")
                         break
 
@@ -323,12 +328,11 @@ class LauncherHPC:
                     self.__logger.debug(
                         f"process <{process}>, output: {decoded_lines}")
 
-                    # stop reading if Proxy Manager Server is started
-                    # NOTE by protocol, Proxy Manager Server prints following
-                    # statement when started:
-                    # "starting Proxy Manager Server at..."
-                    if "POST /submit HTTP/1.1" in decoded_lines:
-                        # server is started, start launching components
+                    # stop reading
+                    
+                    # NOTE the response from App Server is read from
+                    # error stream
+                    if signal_to_continue_cosim in decoded_lines:
                         self.__logger.info(f"{decoded_lines}")
                         break
 
@@ -343,7 +347,7 @@ class LauncherHPC:
                 self.__logger.exception("KeyboardInterrupt caught by: "
                                         f"process <{process}>")
                 # terminate the Popen process peremptory
-                if self.__terminate_launched_component(self.__logger, process) == Response.ERROR:
+                if self.__terminate_launched_component(self.__logger,process) == Response.ERROR:
                     # Case a, process could not be terminated
                     self.__logger.error('could not terminate the process '
                                         f'<{process}>')
@@ -397,7 +401,9 @@ class LauncherHPC:
 
         # read outputs from Proxy Manager Server process to confirm if it
         # has already started listening for connections
-        if self.__read_popen_pipes(self.__proxy_manager_server) == Response.ERROR:
+        if self.__read_popen_pipes(process=self.__proxy_manager_server,
+                                   signal_to_continue_cosim="starting Proxy Manager Server at") == Response.ERROR or\
+           self.__proxy_manager_server.poll() is not None:
             # Case a, server could not be started
             # log the exception with traceback and terminate with error
             return self.__log_exception_and_terminate_with_error(
@@ -552,19 +558,19 @@ class LauncherHPC:
             f'{service} is broken!')
    
     def __setup_app_server(self):
-        my_ip = networking_utils.my_ip()
-
-        # APP_SERVER.run(port=52428)
-        # app_Server_path = inspect.getfile(APP_SERVER)
-        # command_to_run_app_server = f"gunicorn {app_Server_path}:app --bind {my_ip}:52428"
-        port = "52428"
-        host = networking_utils.my_ip()
-        print(f"my_ip: {host}")
+        """starts App Server"""
+        port = self.__port_range_for_app_server["MIN"]
+        # host = networking_utils.my_ip()
+        host = "0.0.0.0"  # NOTE localhost or 127.0.0.1 is not working
+        self.__logger.debug(f"host: {host}, port: {port}")
         command_to_run_app_server = self.__deployment_command(
                 APP_SERVER,
                 SERVICE_COMPONENT_CATEGORY.APP_SERVER.name,
                 host,
-                port)
+                str(port),
+                self.__serialized_proxy_manager_connection_details,
+                self.__serialized_log_settings,
+                self.__serialized_configurations_manager)
 
         self.__app_server = subprocess.Popen(
             command_to_run_app_server,
@@ -573,15 +579,13 @@ class LauncherHPC:
             stderr=subprocess.PIPE,
             shell=False)
 
-        # wait until app server receives the script and saves it to
-        # userland/models directory
-        if self.__read_popen_pipes(self.__app_server) == Response.ERROR:
-            # Case a, server could not be started
-            # log the exception with traceback and terminate with error
-            return self.__log_exception_and_terminate_with_error(
-                                "Could not read output!")
-        # Case b, server is started
-        self.__logger.info("App Server is started!")
+        if self.__app_server.poll() is not None:
+            # something went wrong during the server launching
+            # return with error to terminate
+            return Response.ERROR
+
+        # Case b, all is well
+        self.__logger.info(f"App server is running at {host}:{port}")
         return Response.OK
 
     def launch(self, actions):
@@ -602,14 +606,23 @@ class LauncherHPC:
                 #  Case a, something went wrong with service launching
                 # shut down Proxy Manager Server and terminate loudly
                 return self.__terminate_after_service_went_wrong(self.__app_server)
+            
+            # wait until app server receives the script and saves it to
+            # userland/models directory
+            if self.__read_popen_pipes(process=self.__app_server,
+                                       signal_to_continue_cosim="POST /submit HTTP/1.1") == Response.ERROR:
+                # Case a, an error occured when reading from the pipes
+                # log the exception with traceback and terminate with error
+                self.__terminate_after_service_went_wrong(self.__app_server)
+                return self.__log_exception_and_terminate_with_error(
+                    "Could not read output!")
+
+            # Case b, the script is submitted
+            self.__logger.info("script is submitted by App Server!")
 
         # Case b, all is fine continue with launching
-        self.__logger.info('Checkpoint: Command & Control service is '
-                           'deployed successfully and status is ready!')
+        self.__logger.info('Checkpoint: App Server is deployed successfully!')
     # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
-
-            
-
         #####################################
         # i. Launch Command&Control service #
         #####################################
@@ -675,8 +688,8 @@ class LauncherHPC:
             )
             self.__logger.info('setting up Application Companion.')
             application_companions.append(subprocess.Popen(
-                                          command_to_run_application_companion,
-                                          shell=False))
+                                        command_to_run_application_companion,
+                                        shell=False))
         ###############
         # Checkpoint 2: Application Companions are running and status is ready
         ###############
@@ -737,7 +750,7 @@ class LauncherHPC:
 
         # Case b, all is fine continue with launching
         self.__logger.info('Checkpoint: Orchestrator is deployed successfully '
-                           'and status is ready!')
+                        'and status is ready!')
     # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
         ###############################
         # iv. Launch Steering Service #
@@ -776,7 +789,7 @@ class LauncherHPC:
 
         # Case b, all is fine continue with launching
         self.__logger.info('Checkpoint: Steering Service is deployed '
-                           'successfully and status is ready!')
+                        'successfully and status is ready!')
     # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
 
         # All MS components are deployed successfully
@@ -792,19 +805,29 @@ class LauncherHPC:
 
         # Command&Control Service
         cc_service.wait()
-        self.__logger.debug(f"{application_companion} is terminated")
+        self.__logger.debug(f"{cc_service} is terminated")
 
         # Orchestrator
         orchestrator.wait()
-        self.__logger.debug(f"{application_companion} is terminated")
+        self.__logger.debug(f"{orchestrator} is terminated")
 
         # Steering Service
         steering_service.wait()
-        self.__logger.debug(f"{application_companion} is terminated")
+        self.__logger.debug(f"{steering_service} is terminated")
 
         # Proxy Manager Server
+        # send signal to Proxy Manager Server to stop
+        self.__logger.info('Stopping Proxy Manager Server')
+        self._proxy_manager_client.stop_server()
         self.__proxy_manager_server.wait()
-        self.__logger.debug(f"{application_companion} is terminated")
+        self.__logger.debug(f"{self.__proxy_manager_server} is terminated")
+
+        if self.__is_enabled_app_server_running:
+            # app server
+            self.__logger.info(f"terminating app server...")
+            self.__app_server.terminate()
+            self.__logger.debug(f"{self.__app_server} is terminated")
+
         self.__logger.info("All MS components are terminated!")
     # -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-#
 
