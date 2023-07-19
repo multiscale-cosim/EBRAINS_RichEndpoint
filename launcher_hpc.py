@@ -50,7 +50,7 @@ class LauncherHPC:
                  is_execution_environment_hpc=False,
                  is_interactive=False,
                  is_monitoring_enabled=False,
-                 is_enabled_app_server_running=True):
+                 is_app_server_enabled=False):
 
         self._log_settings = log_settings
         self._configurations_manager = configurations_manager
@@ -77,7 +77,7 @@ class LauncherHPC:
         # flag to determine the target platform for execution
         self.__is_execution_environment_hpc = is_execution_environment_hpc
         # flag whether the app server is should be launched
-        self.__is_enabled_app_server_running = is_enabled_app_server_running
+        self.__is_app_server_enabled = is_app_server_enabled
         self.__app_server = None
         # flag whether the steering is interactive
         self.__is_interactive = is_interactive
@@ -610,7 +610,7 @@ class LauncherHPC:
         #####################################
         # i. Launch App Server #
         #####################################
-        if self.__is_enabled_app_server_running:
+        if self.__is_app_server_enabled:
             if self.__setup_app_server() == Response.ERROR:
                 #  Case a, something went wrong with service launching
                 # shut down Proxy Manager Server and terminate loudly
@@ -831,7 +831,7 @@ class LauncherHPC:
         self.__proxy_manager_server.wait()
         self.__logger.debug(f"{self.__proxy_manager_server} is terminated")
 
-        if self.__is_enabled_app_server_running:
+        if self.__is_app_server_enabled:
             # app server
             self.__logger.info(f"terminating app server...")
             self.__app_server.terminate()
