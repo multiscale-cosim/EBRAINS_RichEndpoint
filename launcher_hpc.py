@@ -347,7 +347,7 @@ class LauncherHPC:
                 self.__logger.exception("KeyboardInterrupt caught by: "
                                         f"process <{process}>")
                 # terminate the Popen process peremptory
-                if self.__terminate_launched_component(self.__logger,process) == Response.ERROR:
+                if self.__terminate_launched_component(process) == Response.ERROR:
                     # Case a, process could not be terminated
                     self.__logger.error('could not terminate the process '
                                         f'<{process}>')
