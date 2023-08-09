@@ -524,37 +524,41 @@ class LauncherHPC:
         """helper function to stop Proxy Manager Server"""
         self._proxy_manager_client.stop_server()
 
-    def __interscaelHub_num_processes(self, actions):
+    def __total_num_interscaelhub_endpoints(self, actions):
+        """
+            determines the total number of interscalehubs in the workflow.
+        """
+        # NOTE The number is later needed by Application Companion
+        # to wait until all interscalehubs register their connection endpoints
+        # in registry service.
+
         self.__logger.debug(f"Number of Actions to be launched{len(actions)}")
-        total_interscaleHub_num_processes = 0
+        interscaelhub_endpoints = 0
         for action in actions:
             self.__logger.debug(f"action: {action}, action-goal: {action.get('action-goal')}")
-            if action.get('action-goal') == constants.CO_SIM_INTERSCALE_HUB or\
-               action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
-                 total_interscaleHub_num_processes += 2
+            # TODO refactor plan XML files/Config Manager to change/support
+            # the goal type as e.g. CO_SIM_TWO_WAY_INTERSCALEHUB
 
-                 # NOTE Application Companion waits until it receives the endpoints from all
-                 # InterscaleHubs (see applicaiton_companion.py line 602).
-                 # Think about cases: where the same port is used for sending
-                 # and receiving e.g. in case of ARBOR
+            if action.get('action-goal') == constants.CO_SIM_INTERSCALE_HUB:
+                # Case a, two endpoints are opened for communication e.g.
+                # TVB_NEST usecase1, where one endpoint is opened for receiving
+                # while the other is opened for sending
 
+                # TODO instead of hard coded value, consider setting the
+                # number of endpoints by taking as a parameter from plan
+                # XML file
+                interscaelhub_endpoints += 2
 
-                 # action_command = action.get('action')
-                 # for index, ntasks in enumerate(action_command):
-                 #     try:
-                 #         if ntasks == '-n':
-                 #             total_interscaleHub_num_processes += int(action_command[index+1])
-                 #         elif '--ntasks=' in ntasks:
-                 #             total_interscaleHub_num_processes += int(list(filter(str.isdigit, ntasks))[0])
-                 #     except TypeError:
-                 #         # list item is of type bytes
-                 #         self.__logger.debug(f"list item type:{type(ntasks)}")
-                 #         # continue traversing
-                 continue
+            elif action.get('action-goal') == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
+                # Case b, only one endpoint is opened for communication e.g.
+                # Cosim_NEST_LFPy usecase
 
-        self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
+                # TODO ref to aforementioned TODO
+                interscaelhub_endpoints += 1
 
-        return int(total_interscaleHub_num_processes)
+        self.__logger.debug(f"total_interscaleHub_num_processes: {interscaelhub_endpoints}")
+
+        return interscaelhub_endpoints
     
     def __terminate_after_service_went_wrong(self, service):
         '''helper funciton to terminate loudly when something wrong'''
@@ -666,7 +670,7 @@ class LauncherHPC:
         serialized_total_num_application_companion = multiprocess_utils.b64encode_and_pickle(
             self.__logger, len(actions))
         # number of InterscaleHub processes to be launched
-        total_interscaleHub_num_processes = self.__interscaelHub_num_processes(actions)
+        total_interscaleHub_num_processes = self.__total_num_interscaelhub_endpoints(actions)
         self.__logger.debug(f"total_interscaleHub_num_processes: {total_interscaleHub_num_processes}")
         if total_interscaleHub_num_processes < 1:
             # shut down Proxy Manager Server and terminate loudly

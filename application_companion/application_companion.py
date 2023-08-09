@@ -570,6 +570,7 @@ class ApplicationCompanion:
         Registry Service
         """
         interscalehub_proxy_list = []
+        # NOTE it waits until it receives the endpoints from all InterscaleHubs
         while len(interscalehub_proxy_list) < self.__total_interscaleHub_num_processes:
             # wait until it gets InterscaleHub proxy from Registry
             # TODO handle deadlock here
@@ -623,6 +624,7 @@ class ApplicationCompanion:
             self.__logger.debug(f"simulator: {simulator}, interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
 
         # get proxies to interscalehubs
+        # NOTE it waits until it receives the endpoints from all InterscaleHubs
         interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
         # get list of interscalehub endpoints        
         interscalehub_endpoints_list = [interscalehub_proxy.endpoint
