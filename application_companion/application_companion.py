@@ -44,7 +44,7 @@ from EBRAINS_RichEndpoint.orchestrator.communication_endpoint import Endpoint
 from EBRAINS_RichEndpoint.orchestrator.proxy_manager_client import ProxyManagerClient
 from EBRAINS_RichEndpoint.orchestrator import utils
 
-from EBRAINS_InterscaleHUB.Interscale_hub.interscalehub_enums import DATA_EXCHANGE_DIRECTION
+from EBRAINS_InterscaleHUB.common.interscalehub_enums import DATA_EXCHANGE_DIRECTION
 from EBRAINS_ConfigManager.global_configurations_manager.xml_parsers.configurations_manager import ConfigurationsManager
 from EBRAINS_ConfigManager.workflow_configurations_manager.xml_parsers import constants
 

@@ -199,7 +199,8 @@ class Orchestrator:
 
     def __find_global_minimum_step_size(self, responses_from_actions):
         """
-        helper function for finding the minimum step size.
+        helper function for finding the minimum step size which is the maximum
+        of all the received local minimum step sizes.
 
          Parameters
         ----------
@@ -219,8 +220,8 @@ class Orchestrator:
                 for sub in responses_from_actions]
             
             self.__logger.debug(f'received step_sizes: {self.__step_sizes}')
-            # return minimum step size in the list
-            return min(self.__step_sizes)
+            # return maximum step size in the list
+            return max(self.__step_sizes)
         except KeyError:
             # the response does not contain step_size
             # log exception with traceback
