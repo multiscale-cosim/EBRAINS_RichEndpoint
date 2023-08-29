@@ -22,10 +22,10 @@ import zmq
 import inspect
 import subprocess
 
-from common.utils import networking_utils
-from common.utils.security_utils import check_integrity
-from common.utils import deployment_settings_hpc
-from common.utils import multiprocess_utils
+from EBRAINS_Launcher.common.utils import networking_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import deployment_settings_hpc
+from EBRAINS_Launcher.common.utils import multiprocess_utils
 
 from EBRAINS_RichEndpoint.application_companion.application_manager import ApplicationManager
 from EBRAINS_RichEndpoint.application_companion.common_enums import EVENT, INTERCOMM_TYPE, PUBLISHING_TOPIC
@@ -151,9 +151,6 @@ class ApplicationCompanion:
     def __set_up_channel_with_app_manager(self):
         """creates communication endpoints"""
         # 1. fetch proxy to Application Manager from registry
-        # TODO set as per number of Application Manager defined in XML settings
-        # total_application_managers = 4
-        # total_application_managers = 2
         application_manager_proxy_list = []
         while len(application_manager_proxy_list) < self.__total_application_managers:
             # wait until it gets Application Manager proxy from Registry
@@ -181,12 +178,8 @@ class ApplicationCompanion:
 
         # 2. fetch Application Manager endpoint set to communicate with
         # Applicaiton Companion
-        # NOTE fetching endpoint details for 'one' Application Manager
-        # TODO change it later to create a list when more Application Managers
-        # are launched
 
         # Case a: communicate using Shared Queues
-        # TODO handle the case of shared queues
         # NOTE the functionality using queues is not tested yet and may be broken
         # if the range of ports are not provided then use the shared queues
         # assuming that it is to be deployed on laptop/single node
@@ -309,8 +302,6 @@ class ApplicationCompanion:
         action = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__actions)
         proxy_manager_connection_details = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__proxy_manager_connection_details)
         port_range_for_application_manager = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__port_range_for_application_manager)
-        # NOTE by dfault the resource usage monitoring is enabled
-        # TODO configure it via XML
         is_resource_usage_monitoring_enabled = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_monitoring_enabled)
         is_execution_environment_hpc = multiprocess_utils.b64encode_and_pickle(self.__logger, self.__is_execution_environment_hpc)
 
@@ -341,7 +332,6 @@ class ApplicationCompanion:
             # range of ports for Application Manager
             port_range_for_application_manager,
             # flag to enable/disable resource usage monitoring
-            # TODO set monitoring enable/disable settings from XML
             is_resource_usage_monitoring_enabled,
             # flag to indicate if the target environment is HPC
             is_execution_environment_hpc,]
@@ -394,24 +384,6 @@ class ApplicationCompanion:
         
         # 3. initialize Application Manager
         self.__launch_application_manager()
-        # self.__application_manager = ApplicationManager(
-        #     # parameters for setting up the uniform log settings
-        #     self._log_settings,  # log settings
-        #     self._configurations_manager,  # Configurations Manager
-        #     # actions (applications) to be launched
-        #     self.__actions,
-        #     # connection detials of Registry Proxy Manager
-        #     self.__proxy_manager_connection_details,
-        #     # range of ports for Application Manager
-        #     self.__port_range_for_application_manager,
-        #     # flag to enable/disable resource usage monitoring
-        #     # TODO set monitoring enable/disable settings from XML
-        #     enable_resource_usage_monitoring=True
-        # )
-
-        # # 4. start the application Manager
-        # self.__logger.debug("starting application Manager.")
-        # self.__application_manager.start()
         # wait a bit to let the Application Manager setup and register with registry
         time.sleep(0.1)
         # setup channel with Application Manager
@@ -598,6 +570,7 @@ class ApplicationCompanion:
         Registry Service
         """
         interscalehub_proxy_list = []
+        # NOTE it waits until it receives the endpoints from all InterscaleHubs
         while len(interscalehub_proxy_list) < self.__total_interscaleHub_num_processes:
             # wait until it gets InterscaleHub proxy from Registry
             # TODO handle deadlock here
@@ -635,7 +608,6 @@ class ApplicationCompanion:
                           DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name
                           ]
         # Case a: One-way data exchange
-        # TODO refactor to make it generic, change with maybe specific usecase type
         if self.__action_goal == constants.CO_SIM_ONE_WAY_SIMULATION:
             interscaleHubs = [DATA_EXCHANGE_DIRECTION.NEST_TO_LFPY.name]
             intercomms = [INTERCOMM_TYPE.RECEIVER.name]
@@ -652,6 +624,7 @@ class ApplicationCompanion:
             self.__logger.debug(f"simulator: {simulator}, interscaleHubs: {interscaleHubs}, intercomm: {intercomms} ")
 
         # get proxies to interscalehubs
+        # NOTE it waits until it receives the endpoints from all InterscaleHubs
         interscalehub_proxy_list = self.__get_interscalehub_proxy_list()
         # get list of interscalehub endpoints        
         interscalehub_endpoints_list = [interscalehub_proxy.endpoint
@@ -764,7 +737,6 @@ class ApplicationCompanion:
         # while they are waiting to receive the connection details of
         # InterscaleHubs
 
-        # TODO handle case where there are more than one Application Managers
         self.__application_manager_proxy_list[0] =\
             self.__health_registry_manager_proxy.update_local_state(
                 self.__application_manager_proxy_list[0], SteeringCommands.INIT)
@@ -778,7 +750,6 @@ class ApplicationCompanion:
         # the InterscaleHub registers its connections details
         # Case a: action type is SIMULATOR
         # fetch and append InterscaleHub MPI endpoint connection details
-        # if self.__action_id == 'action_004' or self.__action_id == 'action_010':  # TODO will be updated with the actions_type from XML
         if self.__action_goal == constants.CO_SIM_SIMULATION or self.__action_goal == constants.CO_SIM_ONE_WAY_SIMULATION:
             # action_simulators_names = {'action_004': "NEST", 'action_010':"TVB"}
             action_with_parameters = self.__actions['action']
@@ -809,7 +780,6 @@ class ApplicationCompanion:
 
         # 6. if action type is INTERSCALEHUB then register the connection
         # details with registry
-        # if self.__action_id == 'action_006' or self.__action_id == 'action_008':  # TODO will be updated with the actions_type from XML
         if self.__action_goal == constants.CO_SIM_INTERSCALE_HUB or self.__action_goal == constants.CO_SIM_ONE_WAY_INTERSCALE_HUB:
             # register endpoints with registry service
             if self.__register_interscalehubs_endpoints(response) == Response.ERROR:

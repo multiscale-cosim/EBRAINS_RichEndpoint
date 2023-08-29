@@ -18,8 +18,8 @@ import sys
 import pickle
 import base64
 
-from common.utils import networking_utils
-from common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import networking_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
 
 from EBRAINS_RichEndpoint.application_companion.common_enums import EVENT, PUBLISHING_TOPIC
 from EBRAINS_RichEndpoint.application_companion.common_enums import Response

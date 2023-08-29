@@ -18,9 +18,9 @@ import zmq
 import pickle
 import base64
 
-from common.utils import networking_utils
-from common.utils.security_utils import check_integrity
-from common.utils import multiprocess_utils
+from EBRAINS_Launcher.common.utils import networking_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import multiprocess_utils
 
 from EBRAINS_RichEndpoint.orchestrator.communicator_queue import CommunicatorQueue
 from EBRAINS_RichEndpoint.orchestrator.communicator_zmq import CommunicatorZMQ
@@ -609,6 +609,7 @@ class Orchestrator:
                                                 self._configurations_manager) 
 
         # 6. update global state
+        self.__logger.info(f'current global state: {self.current_global_state()}')
         if self.__update_global_state() == Response.ERROR:
             self.__logger.critical('Error updating the global state.')
             return Response.ERROR
@@ -714,9 +715,9 @@ class Orchestrator:
                 self.__logger.info('Global state transition history: '
                                    f'{global_state_transition_history}')
 
-                # send signal to Proxy Manager Server to stop
-                self.__logger.info('Stopping Proxy Manager Server')
-                self._proxy_manager_client.stop_server()
+                # # send signal to Proxy Manager Server to stop
+                # self.__logger.info('Stopping Proxy Manager Server')
+                # self._proxy_manager_client.stop_server()
                 # finish execution as normal
                 self.__logger.info('Concluding orchestration')
                 # self.__orchestrator_out_queue.put(Response.OK)

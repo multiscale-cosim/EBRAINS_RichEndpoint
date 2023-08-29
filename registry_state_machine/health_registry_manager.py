@@ -156,7 +156,7 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         except RuntimeError:
             # log the exception with traceback
             self.__logger.exception(message)
-
+    
     def register(self, id, name, category, endpoint,
                  current_status, current_state):
         """
@@ -257,7 +257,7 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
         return all(component.current_status == SERVICE_COMPONENT_STATUS.UP
                    for component in target_components)
 
-    def are_all_have_same_state(self, tar_components) -> bool:
+    def do_all_have_same_state(self, tar_components) -> bool:
         """"
         checks whether the current local states of all components is same.
         Returns boolean value indicating whether all current local states are
@@ -335,7 +335,7 @@ class HealthRegistryManager(metaclass=MetaHealthRegistryManager):
                 all_components,
                 components_with_states,
                 self.are_all_statuses_up,
-                self.are_all_have_same_state)
+                self.do_all_have_same_state)
 
         # check if globals state is already updated by global health monitor
         if self.current_global_state() == next_valid_global_state:

@@ -17,8 +17,8 @@ import sys
 import pickle
 import base64
 
-from common.utils.security_utils import check_integrity
-from common.utils import networking_utils
+from EBRAINS_Launcher.common.utils.security_utils import check_integrity
+from EBRAINS_Launcher.common.utils import networking_utils
 
 from EBRAINS_RichEndpoint.application_companion.common_enums import Response
 from EBRAINS_RichEndpoint.application_companion.common_enums import SteeringCommands
