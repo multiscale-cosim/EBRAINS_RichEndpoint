@@ -215,7 +215,7 @@ class ApplicationManager:
         # NOTE disabling the functionality for hpc becuase it is set directly
         # in 'srun' command given to subprocess.Popen
 
-        if not is_execution_environment_hpc:
+        if not self.__is_execution_environment_hpc:
             self.__logger.info(f'setting affinity for {self.__popen_process.pid}')
             if self.__set_affinity(self.__popen_process.pid) == Response.ERROR:
                 # affinity could not be set, log exception with traceback
